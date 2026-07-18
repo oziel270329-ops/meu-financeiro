@@ -265,6 +265,8 @@ body.mobile-mode .chart-grid{grid-template-columns:1fr;}
   <div class="nav-item" data-tab="cartoes"><span class="nav-icon">▥</span>Cartões</div>
   <div class="nav-item" data-tab="gastos"><span class="nav-icon">▦</span>Gastos do Mês</div>
   <div class="nav-item" data-tab="projecao"><span class="nav-icon">▧</span>Projeção</div>
+  <div class="nav-item" data-tab="parcelamentos"><span class="nav-icon">💳</span>Parcelamentos</div>
+  <div class="nav-item" data-tab="simulador"><span class="nav-icon">🧮</span>Simulador</div>
   <div class="nav-item" data-tab="relatorio"><span class="nav-icon">📄</span>Relatório PDF</div>
   <div class="nav-item" data-tab="config"><span class="nav-icon">⚙</span>Configurações</div>
   <div class="sidebar-foot" id="storage-status">Carregando dados…</div>
@@ -286,6 +288,8 @@ body.mobile-mode .chart-grid{grid-template-columns:1fr;}
   <div class="mobile-nav-item" data-tab="cartoes"><span class="mn-icon">▥</span>Cartões</div>
   <div class="mobile-nav-item" data-tab="gastos"><span class="mn-icon">▦</span>Gastos</div>
   <div class="mobile-nav-item" data-tab="projecao"><span class="mn-icon">▧</span>Projeção</div>
+  <div class="mobile-nav-item" data-tab="parcelamentos"><span class="mn-icon">💳</span>Parcelas</div>
+  <div class="mobile-nav-item" data-tab="simulador"><span class="mn-icon">🧮</span>Simular</div>
   <div class="mobile-nav-item" data-tab="config"><span class="mn-icon">⚙</span>Config</div>
 </nav>
 
@@ -599,6 +603,8 @@ function render(){
   else if(currentTab==='cartoes') main.innerHTML=renderCartoes();
   else if(currentTab==='gastos') main.innerHTML=renderGastos();
   else if(currentTab==='projecao') main.innerHTML=renderProjecao();
+  else if(currentTab==='parcelamentos') main.innerHTML=renderParcelamentos();
+  else if(currentTab==='simulador') main.innerHTML=renderSimulador();
   else if(currentTab==='relatorio') main.innerHTML=renderRelatorio();
   else if(currentTab==='config') main.innerHTML=renderConfig();
   attachHandlers();
@@ -610,6 +616,11 @@ function renderDashboard(){
   const fixed=fixedTotalForMonth(ym), cards=allCardsTotalForMonth(ym), extra=expensesTotalForMonth(ym);
   const total=fixed+cards+extra, income=incomesTotalForMonth(ym), saldo=income-total;
   const outstanding=totalOutstandingDebt();
+  // Comprometimento de renda
+  const compPct = income>0 ? Math.round(((fixed+cards)/income)*100) : 0;
+  const compColor = compPct>=90?'var(--red)':compPct>=70?'var(--amber)':'var(--green)';
+  const compEmoji = compPct>=90?'🔴':compPct>=70?'🟡':'🟢';
+  const compBarW = Math.min(100,compPct);
   // Tape navegável
   const months=Array.from({length:12},(_,i)=>ymAdd(ymNow(),i-3));
   const max=Math.max(...months.map(m=>fixedTotalForMonth(m)+allCardsTotalForMonth(m)),1);
@@ -648,6 +659,19 @@ function renderDashboard(){
       <div class="stat"><div class="stat-label">Gastos extras</div><div class="stat-value red mono">${brl(extra)}</div><div class="stat-note">${expensesForMonth(ym).length} lançamento(s)</div></div>
       <div class="stat"><div class="stat-label">Total do mês</div><div class="stat-value mono">${brl(total)}</div></div>
       <div class="stat"><div class="stat-label">Saldo do mês</div><div class="stat-value mono ${saldo>=0?'green':'red'}">${brl(saldo)}</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Comprometimento de renda — ${ymFull(ym)}</div>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:10px">
+        <div style="font-size:28px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${compColor}">${compEmoji} ${compPct}%</div>
+        <div style="font-size:13px;color:var(--text-dim)">${brl(fixed+cards)} de ${brl(income)} comprometidos com fixas + cartões<br><span style="color:var(--text-faint);font-size:12px">Sobra livre: <b style="color:var(--green)">${brl(Math.max(0,income-fixed-cards))}</b> antes dos gastos extras</span></div>
+      </div>
+      <div style="background:var(--bg-elevated);border-radius:6px;height:10px;overflow:hidden">
+        <div style="height:100%;width:${compBarW}%;background:${compColor};border-radius:6px;transition:.5s"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-faint);margin-top:4px">
+        <span>0%</span><span style="color:var(--green)">Confortável &lt;70%</span><span style="color:var(--amber)">Apertado 70-90%</span><span style="color:var(--red)">Crítico &gt;90%</span><span>100%</span>
+      </div>
     </div>
     <div class="panel">
       <div class="panel-title">Dívida total em aberto</div>
@@ -1008,7 +1032,230 @@ function renderProjecao(){
   `;
 }
 
-// ===== RELATÓRIO PDF =====
+// ===== PARCELAMENTOS =====
+function renderParcelamentos(){
+  const now=ymNow();
+  const ativos=appData.purchases.filter(p=>{
+    const last=ymAdd(p.firstMonth,p.installments-1);
+    return last>=now;
+  }).sort((a,b)=>{
+    const remA=ymDiff(ymAdd(a.firstMonth,a.installments-1),now);
+    const remB=ymDiff(ymAdd(b.firstMonth,b.installments-1),now);
+    return remA-remB;
+  });
+  const quitados=appData.purchases.filter(p=>{
+    const last=ymAdd(p.firstMonth,p.installments-1);
+    return last<now;
+  });
+  const totalDevedor=ativos.reduce((s,p)=>{
+    let rem=0;
+    for(let i=0;i<p.installments;i++){
+      const ym=ymAdd(p.firstMonth,i);
+      if(ym>=now) rem+=installmentValue(p,i);
+    }
+    return s+rem;
+  },0);
+  const totalMesAtual=ativos.reduce((s,p)=>s+purchaseAmountForMonth(p,now),0);
+
+  const cardMap={};
+  appData.cards.forEach(c=>cardMap[c.id]=c.name);
+
+  const rows=ativos.map(p=>{
+    const idx=ymDiff(now,p.firstMonth);
+    const pagas=Math.max(0,Math.min(idx+1,p.installments));
+    const restantes=p.installments-pagas;
+    const last=ymAdd(p.firstMonth,p.installments-1);
+    let devedor=0;
+    for(let i=0;i<p.installments;i++){const ym=ymAdd(p.firstMonth,i);if(ym>=now)devedor+=installmentValue(p,i);}
+    const parcMes=purchaseAmountForMonth(p,now);
+    const pct=Math.round((pagas/p.installments)*100);
+    const urgente=restantes<=2;
+    return `<tr>
+      <td>
+        <div style="font-weight:600">${p.description}</div>
+        <div style="font-size:11px;color:var(--text-faint)">${cardMap[p.cardId]||'Cartão'} · ${p.category||'Outros'}</div>
+      </td>
+      <td class="num">${brl(p.totalAmount)}</td>
+      <td class="num" style="color:var(--amber)">${brl(installmentValue(p,0))}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="background:var(--bg-elevated);border-radius:4px;height:6px;width:80px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:var(--green);border-radius:4px"></div>
+          </div>
+          <span style="font-size:11px;color:var(--text-dim)">${pagas}/${p.installments}</span>
+        </div>
+      </td>
+      <td><span class="tag ${urgente?'red':'blue'}">${restantes} restante${restantes!==1?'s':''}</span></td>
+      <td style="color:var(--text-dim);font-size:12px">${ymLabel(last)}</td>
+      <td class="num" style="color:var(--red);font-weight:700">${brl(devedor)}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="page-title">Parcelamentos Ativos</div>
+    <div class="page-sub">Todas as compras parceladas em andamento, com progresso e saldo devedor.</div>
+    <div class="stat-grid">
+      <div class="stat"><div class="stat-label">Parcelamentos ativos</div><div class="stat-value amber mono">${ativos.length}</div><div class="stat-note">${quitados.length} quitado(s)</div></div>
+      <div class="stat"><div class="stat-label">Total ainda a pagar</div><div class="stat-value red mono">${brl(totalDevedor)}</div><div class="stat-note">saldo devedor total</div></div>
+      <div class="stat"><div class="stat-label">Impacto este mês</div><div class="stat-value blue mono">${brl(totalMesAtual)}</div><div class="stat-note">nas faturas de ${ymLabel(now)}</div></div>
+    </div>
+    ${ativos.length?`
+    <div class="panel">
+      <div class="panel-title">Compras em andamento</div>
+      <table>
+        <thead><tr><th>Descrição</th><th>Total</th><th>Parcela</th><th>Progresso</th><th>Situação</th><th>Termina</th><th>Falta pagar</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`:'<div class="panel"><div class="empty">Nenhum parcelamento ativo no momento.</div></div>'}
+    ${quitados.length?`
+    <div class="panel">
+      <div class="panel-title" style="color:var(--green)">✅ Quitados (${quitados.length})</div>
+      <table>
+        <thead><tr><th>Descrição</th><th>Cartão</th><th>Total pago</th><th>Parcelas</th><th>Quitado em</th></tr></thead>
+        <tbody>${quitados.sort((a,b)=>ymAdd(b.firstMonth,b.installments-1).localeCompare(ymAdd(a.firstMonth,a.installments-1))).map(p=>`
+          <tr>
+            <td>${p.description}</td>
+            <td style="color:var(--text-dim);font-size:12px">${cardMap[p.cardId]||'Cartão'}</td>
+            <td class="num" style="color:var(--green)">${brl(p.totalAmount)}</td>
+            <td style="color:var(--text-dim)">${p.installments}x de ${brl(installmentValue(p,0))}</td>
+            <td style="color:var(--text-faint);font-size:12px">${ymLabel(ymAdd(p.firstMonth,p.installments-1))}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`:''}
+  `;
+}
+
+// ===== SIMULADOR =====
+let simState={valor:'',parcelas:12,mes:ymNow(),renda:''};
+function renderSimulador(){
+  const income=incomesTotalForMonth(ymNow());
+  const meses=parseInt(simState.parcelas)||12;
+  const valor=parseFloat(simState.valor)||0;
+  const parcMensal=valor>0?Math.round((valor/meses)*100)/100:0;
+  const mesInicio=simState.mes||ymNow();
+  const rendaBase=parseFloat(simState.renda)||income;
+
+  let preview='';
+  if(valor>0 && rendaBase>0){
+    const months=Array.from({length:meses},(_,i)=>ymAdd(mesInicio,i));
+    const maxSaldo=Math.max(...months.map(m=>{
+      const fixed=fixedTotalForMonth(m),cards=allCardsTotalForMonth(m),extra=expensesTotalForMonth(m);
+      return rendaBase-(fixed+cards+extra);
+    }),1);
+
+    const rows=months.map((m,i)=>{
+      const fixed=fixedTotalForMonth(m),cards=allCardsTotalForMonth(m),extra=expensesTotalForMonth(m);
+      const totalSemSim=fixed+cards+extra;
+      const totalComSim=totalSemSim+parcMensal;
+      const saldoSemSim=rendaBase-totalSemSim;
+      const saldoComSim=rendaBase-totalComSim;
+      const compPct=Math.min(100,Math.round((totalComSim/rendaBase)*100));
+      const semaforo=saldoComSim<0?'🔴':saldoComSim<rendaBase*0.1?'🟡':'🟢';
+      return `<tr style="${saldoComSim<0?'background:var(--red-dim)':''}">
+        <td>${ymFull(m)}${m===ymNow()?' <span class="tag amber">hoje</span>':''}</td>
+        <td class="num" style="color:var(--text-dim)">${brl(totalSemSim)}</td>
+        <td class="num" style="color:var(--amber)">${brl(parcMensal)}</td>
+        <td class="num" style="font-weight:700">${brl(totalComSim)}</td>
+        <td class="num" style="color:${saldoComSim>=0?'var(--green)':'var(--red)'};font-weight:700">${brl(saldoComSim)}</td>
+        <td style="text-align:center">${semaforo}</td>
+        <td>
+          <div style="background:var(--bg-elevated);border-radius:3px;height:6px;width:80px;overflow:hidden;display:inline-block">
+            <div style="height:100%;width:${compPct}%;background:${compPct>=90?'var(--red)':compPct>=70?'var(--amber)':'var(--green)'};border-radius:3px"></div>
+          </div>
+          <span style="font-size:10px;color:var(--text-faint);margin-left:4px">${compPct}%</span>
+        </td>
+      </tr>`;
+    }).join('');
+
+    const mesesVermelhos=months.filter((m,i)=>{
+      const fixed=fixedTotalForMonth(m),cards=allCardsTotalForMonth(m),extra=expensesTotalForMonth(m);
+      return rendaBase-(fixed+cards+extra+parcMensal)<0;
+    }).length;
+    const piorMes=months.reduce((worst,m)=>{
+      const fixed=fixedTotalForMonth(m),cards=allCardsTotalForMonth(m),extra=expensesTotalForMonth(m);
+      const s=rendaBase-(fixed+cards+extra+parcMensal);
+      return s<worst.s?{m,s}:worst;
+    },{m:null,s:Infinity});
+
+    preview=`
+      <div class="stat-grid" style="margin-top:16px">
+        <div class="stat"><div class="stat-label">Parcela mensal</div><div class="stat-value amber mono">${brl(parcMensal)}</div></div>
+        <div class="stat"><div class="stat-label">Total a pagar</div><div class="stat-value red mono">${brl(valor)}</div></div>
+        <div class="stat"><div class="stat-label">Meses no vermelho</div><div class="stat-value ${mesesVermelhos>0?'red':'green'} mono">${mesesVermelhos}</div><div class="stat-note">de ${meses} meses</div></div>
+        <div class="stat"><div class="stat-label">Pior mês</div><div class="stat-value mono" style="font-size:16px;color:${piorMes.s<0?'var(--red)':'var(--green)'}">${piorMes.m?ymLabel(piorMes.m):'—'}</div><div class="stat-note">${brl(piorMes.s)} de saldo</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Impacto mês a mês</div>
+        <table>
+          <thead><tr><th>Mês</th><th>Gastos atuais</th><th>+ Parcela</th><th>Total</th><th>Saldo</th><th></th><th>Comprometimento</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="page-title">Simulador de Compra</div>
+    <div class="page-sub">Veja como uma nova parcela impacta seu orçamento mês a mês antes de comprar.</div>
+    <div class="panel">
+      <div class="panel-title">Configure a simulação</div>
+      <div class="form-row">
+        <div class="field"><label>Renda mensal (R$)</label><input type="number" step="0.01" min="0" id="sim-renda" placeholder="Auto (do mês atual)" value="${simState.renda}" oninput="simState.renda=this.value;renderSimuladorLive()"></div>
+        <div class="field"><label>Valor total da compra (R$)</label><input type="number" step="0.01" min="0" id="sim-valor" value="${simState.valor}" oninput="simState.valor=this.value;renderSimuladorLive()"></div>
+        <div class="field"><label>Número de parcelas</label><input type="number" min="1" max="120" id="sim-parcelas" value="${simState.parcelas}" oninput="simState.parcelas=this.value;renderSimuladorLive()"></div>
+        <div class="field"><label>Mês da 1ª parcela</label><input type="month" id="sim-mes" value="${simState.mes}" oninput="simState.mes=this.value;renderSimuladorLive()"></div>
+      </div>
+      ${income>0&&!simState.renda?`<div class="hint">💡 Usando sua renda de ${ymLabel(ymNow())}: <b>${brl(income)}</b>. Preencha o campo acima para usar um valor diferente.</div>`:''}
+    </div>
+    <div id="sim-preview">${preview}</div>
+  `;
+}
+function renderSimuladorLive(){
+  document.getElementById('sim-preview').innerHTML=(() => {
+    const income=incomesTotalForMonth(ymNow());
+    const meses=parseInt(simState.parcelas)||12;
+    const valor=parseFloat(simState.valor)||0;
+    const parcMensal=valor>0?Math.round((valor/meses)*100)/100:0;
+    const mesInicio=simState.mes||ymNow();
+    const rendaBase=parseFloat(simState.renda)||income;
+    if(!valor||!rendaBase) return '';
+    const months=Array.from({length:meses},(_,i)=>ymAdd(mesInicio,i));
+    const rows=months.map((m)=>{
+      const fixed=fixedTotalForMonth(m),cards=allCardsTotalForMonth(m),extra=expensesTotalForMonth(m);
+      const totalSemSim=fixed+cards+extra,totalComSim=totalSemSim+parcMensal;
+      const saldoComSim=rendaBase-totalComSim;
+      const compPct=Math.min(100,Math.round((totalComSim/rendaBase)*100));
+      const semaforo=saldoComSim<0?'🔴':saldoComSim<rendaBase*0.1?'🟡':'🟢';
+      return `<tr style="${saldoComSim<0?'background:var(--red-dim)':''}">
+        <td>${ymFull(m)}${m===ymNow()?' <span class="tag amber">hoje</span>':''}</td>
+        <td class="num" style="color:var(--text-dim)">${brl(totalSemSim)}</td>
+        <td class="num" style="color:var(--amber)">${brl(parcMensal)}</td>
+        <td class="num" style="font-weight:700">${brl(totalComSim)}</td>
+        <td class="num" style="color:${saldoComSim>=0?'var(--green)':'var(--red)'};font-weight:700">${brl(saldoComSim)}</td>
+        <td style="text-align:center">${semaforo}</td>
+        <td>
+          <div style="background:var(--bg-elevated);border-radius:3px;height:6px;width:80px;overflow:hidden;display:inline-block">
+            <div style="height:100%;width:${compPct}%;background:${compPct>=90?'var(--red)':compPct>=70?'var(--amber)':'var(--green)'};border-radius:3px"></div>
+          </div>
+          <span style="font-size:10px;color:var(--text-faint);margin-left:4px">${compPct}%</span>
+        </td>
+      </tr>`;
+    }).join('');
+    const mesesVermelhos=months.filter(m=>{const f=fixedTotalForMonth(m),c=allCardsTotalForMonth(m),g=expensesTotalForMonth(m);return rendaBase-(f+c+g+parcMensal)<0;}).length;
+    const piorMes=months.reduce((w,m)=>{const f=fixedTotalForMonth(m),c=allCardsTotalForMonth(m),g=expensesTotalForMonth(m),s=rendaBase-(f+c+g+parcMensal);return s<w.s?{m,s}:w;},{m:null,s:Infinity});
+    return `<div class="stat-grid" style="margin-top:16px">
+      <div class="stat"><div class="stat-label">Parcela mensal</div><div class="stat-value amber mono">${brl(parcMensal)}</div></div>
+      <div class="stat"><div class="stat-label">Total a pagar</div><div class="stat-value red mono">${brl(valor)}</div></div>
+      <div class="stat"><div class="stat-label">Meses no vermelho</div><div class="stat-value ${mesesVermelhos>0?'red':'green'} mono">${mesesVermelhos}</div><div class="stat-note">de ${meses} meses</div></div>
+      <div class="stat"><div class="stat-label">Pior mês</div><div class="stat-value mono" style="font-size:16px;color:${piorMes.s<0?'var(--red)':'var(--green)'}">${piorMes.m?ymLabel(piorMes.m):'—'}</div><div class="stat-note">${brl(piorMes.s)} de saldo</div></div>
+    </div>
+    <div class="panel"><div class="panel-title">Impacto mês a mês</div>
+      <table><thead><tr><th>Mês</th><th>Gastos atuais</th><th>+ Parcela</th><th>Total</th><th>Saldo</th><th></th><th>Comprometimento</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </div>`;
+  })();
+}
 function renderRelatorio(){
   return `
     <div class="page-title">Relatório do Mês</div>
