@@ -128,6 +128,13 @@ tr:hover td{background:var(--bg-hover);}
   <div class="nav-item" data-tab="gastos"><span class="nav-icon">▦</span>Gastos do Mês</div>
   <div class="nav-item" data-tab="projecao"><span class="nav-icon">▧</span>Projeção</div>
   <div class="sidebar-foot" id="storage-status">Carregando dados…</div>
+  <div style="padding:8px 20px; display:flex; flex-direction:column; gap:6px;">
+    <button class="btn btn-sm" id="btn-gdrive" onclick="gdriveLogin()" style="background:var(--blue);color:#fff;font-size:12px">☁ Conectar Google Drive</button>
+    <div style="display:flex;gap:6px">
+      <button class="btn secondary btn-sm" onclick="exportData()" title="Exportar backup JSON" style="font-size:11px">⬇ Backup</button>
+      <label class="btn secondary btn-sm" style="cursor:pointer;font-size:11px" title="Importar backup JSON">⬆ Importar<input type="file" accept=".json" style="display:none" onchange="importData(event)"></label>
+    </div>
+  </div>
 </div>
 
 <div class="main" id="main"></div>
@@ -145,7 +152,7 @@ const CAT_FIXA = ['Moradia','Financiamento','Assinatura','Educação','Saúde','
 const CAT_GASTO = ['Alimentação','Mercado','Vestuário','Transporte','Lazer','Saúde','Casa','Educação','Assinaturas','Pets','Presentes','Viagem','Compras','Outros'];
 const CAT_ENTRADA = ['Salário','Freelance','Investimentos','Reembolso','Outros'];
 
-function ymNow(){ return '2026-08'; } // âncora fixa em agosto/2026 — julho já passou
+function ymNow(){ return '2026-08'; }
 function ymLabel(ym){ const [y,m]=ym.split('-').map(Number); return MESES[m-1]+'/'+String(y).slice(2); }
 function ymFull(ym){ const [y,m]=ym.split('-').map(Number); return MESES[m-1]+' de '+y; }
 function ymAdd(ym,n){ let [y,m]=ym.split('-').map(Number); m+=n; y+=Math.floor((m-1)/12); m=((m-1)%12+12)%12+1; return y+'-'+String(m).padStart(2,'0'); }
@@ -153,22 +160,141 @@ function ymDiff(a,b){ const [ya,ma]=a.split('-').map(Number),[yb,mb]=b.split('-'
 function brl(v){ return (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
+// ---------- Google Drive ----------
+const CLIENT_ID = '796724966722-628cflk7aci60vee2375dtrvps7mrbem.apps.googleusercontent.com';
+const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
+const DRIVE_FILE_NAME = 'meu-financeiro-data.json';
+const STORAGE_KEY = 'meu-financeiro-v1';
+
+let gdriveToken = null;
+let gdriveFileId = null;
+let gdriveReady = false;
+
+function setStatus(msg){ document.getElementById('storage-status').textContent = msg; }
+
+// Carrega a lib do Google Identity Services dinamicamente
+function loadGIS(){
+  return new Promise(resolve=>{
+    if(window.google && window.google.accounts){ resolve(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.onload = resolve;
+    document.head.appendChild(s);
+  });
+}
+
+async function gdriveLogin(){
+  setStatus('🔄 Conectando ao Google…');
+  await loadGIS();
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback: async (resp)=>{
+      if(resp.error){ setStatus('❌ Erro ao conectar'); return; }
+      gdriveToken = resp.access_token;
+      localStorage.setItem('gdrive-token-hint', '1');
+      document.getElementById('btn-gdrive').textContent = '✅ Drive conectado';
+      document.getElementById('btn-gdrive').style.background = 'var(--green)';
+      gdriveReady = true;
+      setStatus('☁ Sincronizando…');
+      await loadFromDrive();
+    }
+  });
+  client.requestAccessToken();
+}
+
+async function driveRequest(url, options={}){
+  const res = await fetch(url, {
+    ...options,
+    headers: { 'Authorization': 'Bearer '+gdriveToken, ...(options.headers||{}) }
+  });
+  if(!res.ok){ const t=await res.text(); throw new Error(t); }
+  return res;
+}
+
+async function findOrCreateFile(){
+  if(gdriveFileId) return gdriveFileId;
+  // Busca arquivo existente no appDataFolder
+  const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+  const res = await driveRequest(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id,name)`);
+  const data = await res.json();
+  if(data.files && data.files.length>0){ gdriveFileId = data.files[0].id; return gdriveFileId; }
+  // Cria arquivo novo
+  const meta = { name: DRIVE_FILE_NAME, parents: ['appDataFolder'] };
+  const cr = await driveRequest('https://www.googleapis.com/drive/v3/files?fields=id', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(meta)
+  });
+  const created = await cr.json();
+  gdriveFileId = created.id;
+  return gdriveFileId;
+}
+
+async function loadFromDrive(){
+  try{
+    const fileId = await findOrCreateFile();
+    const res = await driveRequest(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+    const text = await res.text();
+    if(text && text.startsWith('{')){
+      appData = { recurringDebts:[], cards:[], purchases:[], expenses:[], incomes:[], ...JSON.parse(text) };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+    }
+    setStatus('☁ Drive conectado · auto-salvo');
+    render();
+  }catch(e){
+    // arquivo vazio ou novo — tudo certo
+    setStatus('☁ Drive conectado · novo arquivo');
+    render();
+  }
+}
+
+async function saveToDrive(json){
+  try{
+    const fileId = await findOrCreateFile();
+    await driveRequest(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, body: json
+    });
+  }catch(e){ console.error('Drive save error', e); setStatus('⚠️ Erro ao salvar no Drive'); }
+}
+
 // ---------- Persistência ----------
 async function loadData(){
+  // Tenta localStorage para exibir algo rápido
   try{
-    const res = await window.storage.get('financeiro-data', false);
-    if(res && res.value) appData = JSON.parse(res.value);
-  }catch(e){ /* chave ainda não existe: mantém estado inicial */ }
-  document.getElementById('storage-status').textContent = 'Dados salvos automaticamente';
-  render();
-}
-async function saveData(){
-  try{
-    await window.storage.set('financeiro-data', JSON.stringify(appData), false);
-  }catch(e){
-    document.getElementById('storage-status').textContent = 'Erro ao salvar — tente novamente';
-    console.error(e);
+    const local = localStorage.getItem(STORAGE_KEY);
+    if(local) appData = JSON.parse(local);
+  }catch(e){}
+
+  // Se já tinha token salvo, tenta reconectar silenciosamente
+  if(localStorage.getItem('gdrive-token-hint')){
+    setStatus('🔄 Reconectando ao Drive…');
+    await loadGIS();
+    try{
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID, scope: SCOPES,
+        callback: async(resp)=>{
+          if(!resp.error){
+            gdriveToken = resp.access_token;
+            gdriveReady = true;
+            document.getElementById('btn-gdrive').textContent = '✅ Drive conectado';
+            document.getElementById('btn-gdrive').style.background = 'var(--green)';
+            await loadFromDrive();
+          } else { setStatus('💾 Salvo localmente · clique para conectar Drive'); render(); }
+        }
+      });
+      client.requestAccessToken({prompt:''});
+    }catch(e){ setStatus('💾 Salvo localmente · clique para conectar Drive'); render(); }
+  } else {
+    setStatus('💾 Salvo localmente · clique para conectar Drive');
+    render();
   }
+}
+
+async function saveData(){
+  const json = JSON.stringify(appData);
+  // Sempre salva local
+  try{ localStorage.setItem(STORAGE_KEY, json); }catch(e){}
+  // Salva no Drive se conectado
+  if(gdriveReady && gdriveToken){ await saveToDrive(json); }
 }
 
 // ---------- Cálculos ----------
@@ -746,6 +872,32 @@ function attachHandlers(){
 
   // Projeção range
   const projSel = document.getElementById('proj-range'); if(projSel) projSel.onchange=()=>{ projRange=parseInt(projSel.value); render(); };
+}
+
+// ---------- Backup / Restore ----------
+function exportData(){
+  const blob = new Blob([JSON.stringify(appData, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'meu-financeiro-backup-' + ymNow() + '.json';
+  a.click();
+}
+function importData(e){
+  const file = e.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async ev => {
+    try{
+      const parsed = JSON.parse(ev.target.result);
+      if(parsed && typeof parsed === 'object'){
+        appData = { recurringDebts:[], cards:[], purchases:[], expenses:[], incomes:[], ...parsed };
+        await saveData();
+        render();
+        document.getElementById('storage-status').textContent = '✅ Importado com sucesso!';
+      }
+    }catch(err){ alert('Arquivo inválido. Use um backup gerado por este app.'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
 }
 
 loadData();
