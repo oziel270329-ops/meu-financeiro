@@ -951,13 +951,14 @@ function renderCardPurchasesTable(cardId){
 }
 function renderPurchaseForm(cardId,purchase){
   const ed=purchase||null;
+  const parcela=ed?Math.round((ed.totalAmount/ed.installments)*100)/100:'';
   return `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
     <form id="form-purchase" data-card="${cardId}" data-edit="${ed?ed.id:''}">
       <div class="form-row">
         <div class="field" style="flex:2"><label>Descrição</label><input name="description" required value="${ed?ed.description:''}"></div>
         <div class="field"><label>Categoria</label><select name="category">${CAT_GASTO.map(c=>`<option ${ed&&ed.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
-        <div class="field"><label>Valor total</label><input name="totalAmount" type="number" step="0.01" min="0" required value="${ed?ed.totalAmount:''}"></div>
-        <div class="field"><label>Parcelas</label><input name="installments" type="number" min="1" max="60" value="${ed?ed.installments:1}" required></div>
+        <div class="field"><label>Valor da parcela (R$)</label><input name="parcela" type="number" step="0.01" min="0" required value="${parcela}"></div>
+        <div class="field"><label>Nº de parcelas</label><input name="installments" type="number" min="1" max="120" value="${ed?ed.installments:1}" required></div>
         <div class="field"><label>1ª parcela</label><input name="firstMonth" type="month" required value="${ed?ed.firstMonth:ymNow()}"></div>
       </div>
       <div class="form-row">
@@ -1470,12 +1471,15 @@ function attachHandlers(){
   const formPurchase=document.getElementById('form-purchase');
   if(formPurchase) formPurchase.onsubmit=async e=>{
     e.preventDefault(); const f=new FormData(formPurchase); const editId=formPurchase.dataset.edit;
+    const parcela=parseFloat(f.get('parcela'));
+    const installments=parseInt(f.get('installments'));
+    const totalAmount=Math.round(parcela*installments*100)/100;
     if(editId){
       const p=appData.purchases.find(x=>x.id===editId);
-      if(p){p.description=f.get('description');p.category=f.get('category');p.totalAmount=parseFloat(f.get('totalAmount'));p.installments=parseInt(f.get('installments'));p.firstMonth=f.get('firstMonth');p.notes=f.get('notes')||'';}
+      if(p){p.description=f.get('description');p.category=f.get('category');p.totalAmount=totalAmount;p.installments=installments;p.firstMonth=f.get('firstMonth');p.notes=f.get('notes')||'';}
       editing.purchaseEdit=null;
     } else {
-      appData.purchases.push({id:uid(),cardId:formPurchase.dataset.card,description:f.get('description'),category:f.get('category'),totalAmount:parseFloat(f.get('totalAmount')),installments:parseInt(f.get('installments')),firstMonth:f.get('firstMonth'),notes:f.get('notes')||''});
+      appData.purchases.push({id:uid(),cardId:formPurchase.dataset.card,description:f.get('description'),category:f.get('category'),totalAmount,installments,firstMonth:f.get('firstMonth'),notes:f.get('notes')||''});
       editing.purchaseCard=null;
     }
     await saveData(); render();
