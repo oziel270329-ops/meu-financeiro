@@ -169,6 +169,8 @@ const STORAGE_KEY = 'meu-financeiro-v1';
 let gdriveToken = null;
 let gdriveFileId = null;
 let gdriveReady = false;
+let gdriveClient = null;
+let tokenRenewTimer = null;
 
 function setStatus(msg){ document.getElementById('storage-status').textContent = msg; }
 
@@ -183,24 +185,40 @@ function loadGIS(){
   });
 }
 
+// Renova token silenciosamente a cada 45 min (expira em 60)
+function scheduleTokenRenew(){
+  if(tokenRenewTimer) clearTimeout(tokenRenewTimer);
+  tokenRenewTimer = setTimeout(async ()=>{
+    if(!gdriveClient || !gdriveReady) return;
+    gdriveClient.requestAccessToken({prompt:''});
+  }, 45 * 60 * 1000);
+}
+
+function onTokenReceived(resp, isFirstLoad){
+  if(resp.error){ 
+    if(isFirstLoad) setStatus('💾 Salvo localmente · clique para conectar Drive');
+    else setStatus('⚠️ Token expirado · reconectando…');
+    return; 
+  }
+  gdriveToken = resp.access_token;
+  gdriveReady = true;
+  localStorage.setItem('gdrive-token-hint', '1');
+  document.getElementById('btn-gdrive').textContent = '✅ Drive conectado';
+  document.getElementById('btn-gdrive').style.background = 'var(--green)';
+  scheduleTokenRenew();
+  if(isFirstLoad){ setStatus('☁ Sincronizando…'); loadFromDrive(); }
+  else setStatus('☁ Drive conectado · auto-salvo');
+}
+
 async function gdriveLogin(){
   setStatus('🔄 Conectando ao Google…');
   await loadGIS();
-  const client = google.accounts.oauth2.initTokenClient({
+  gdriveClient = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: SCOPES,
-    callback: async (resp)=>{
-      if(resp.error){ setStatus('❌ Erro ao conectar'); return; }
-      gdriveToken = resp.access_token;
-      localStorage.setItem('gdrive-token-hint', '1');
-      document.getElementById('btn-gdrive').textContent = '✅ Drive conectado';
-      document.getElementById('btn-gdrive').style.background = 'var(--green)';
-      gdriveReady = true;
-      setStatus('☁ Sincronizando…');
-      await loadFromDrive();
-    }
+    callback: (resp) => onTokenReceived(resp, true)
   });
-  client.requestAccessToken();
+  gdriveClient.requestAccessToken();
 }
 
 async function driveRequest(url, options={}){
@@ -269,19 +287,11 @@ async function loadData(){
     setStatus('🔄 Reconectando ao Drive…');
     await loadGIS();
     try{
-      const client = google.accounts.oauth2.initTokenClient({
+      gdriveClient = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID, scope: SCOPES,
-        callback: async(resp)=>{
-          if(!resp.error){
-            gdriveToken = resp.access_token;
-            gdriveReady = true;
-            document.getElementById('btn-gdrive').textContent = '✅ Drive conectado';
-            document.getElementById('btn-gdrive').style.background = 'var(--green)';
-            await loadFromDrive();
-          } else { setStatus('💾 Salvo localmente · clique para conectar Drive'); render(); }
-        }
+        callback: (resp) => onTokenReceived(resp, true)
       });
-      client.requestAccessToken({prompt:''});
+      gdriveClient.requestAccessToken({prompt:''});
     }catch(e){ setStatus('💾 Salvo localmente · clique para conectar Drive'); render(); }
   } else {
     setStatus('💾 Salvo localmente · clique para conectar Drive');
