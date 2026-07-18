@@ -112,9 +112,83 @@ tr:hover td{background:var(--bg-hover);}
 .hint{font-size:12px; color:var(--text-faint); margin-top:8px; line-height:1.5;}
 .checkbox-row{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-dim);}
 .checkbox-row input{width:auto; padding:0;}
+
+/* ===== MODO MOBILE ===== */
+body.mobile-mode{flex-direction:column;}
+body.mobile-mode .sidebar{
+  display:none;
+}
+/* Bottom nav bar */
+.mobile-nav{
+  display:none; position:fixed; bottom:0; left:0; right:0; z-index:100;
+  background:var(--bg-panel); border-top:1px solid var(--border);
+  flex-direction:row; justify-content:space-around; align-items:center;
+  padding:6px 0 env(safe-area-inset-bottom, 6px);
+}
+body.mobile-mode .mobile-nav{ display:flex; }
+.mobile-nav-item{
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  padding:6px 10px; cursor:pointer; color:var(--text-faint); font-size:10px;
+  font-weight:600; letter-spacing:.3px; border-radius:8px; transition:.15s; flex:1;
+}
+.mobile-nav-item .mn-icon{ font-size:18px; }
+.mobile-nav-item.active{ color:var(--amber); }
+.mobile-nav-item:hover{ background:var(--bg-hover); }
+
+/* Header mobile */
+.mobile-header{
+  display:none; position:sticky; top:0; z-index:99;
+  background:var(--bg-panel); border-bottom:1px solid var(--border);
+  padding:12px 16px; align-items:center; justify-content:space-between;
+}
+body.mobile-mode .mobile-header{ display:flex; }
+.mobile-header-title{ font-size:15px; font-weight:700; }
+.mobile-header-sub{ font-size:11px; color:var(--text-dim); }
+.mobile-drive-dot{
+  width:8px; height:8px; border-radius:50%; background:var(--text-faint);
+  display:inline-block; margin-right:4px;
+}
+.mobile-drive-dot.connected{ background:var(--green); }
+
+/* Botão alternar modo */
+.toggle-mode-btn{
+  position:fixed; bottom:72px; right:14px; z-index:200;
+  background:var(--bg-elevated); border:1px solid var(--border);
+  color:var(--text-dim); font-size:11px; padding:6px 10px;
+  border-radius:20px; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.4);
+  display:flex; align-items:center; gap:5px;
+}
+body:not(.mobile-mode) .toggle-mode-btn{
+  bottom:14px;
+}
+
+/* Ajuste do main no mobile */
+body.mobile-mode .main{
+  padding:16px; padding-bottom:80px; max-width:100%;
+}
+body.mobile-mode .stat-grid{
+  grid-template-columns: repeat(2, 1fr); gap:10px;
+}
+body.mobile-mode .stat-value{ font-size:17px; }
+body.mobile-mode .form-row{ flex-direction:column; }
+body.mobile-mode .field{ min-width:100%; }
+body.mobile-mode table{ font-size:12px; }
+body.mobile-mode td, body.mobile-mode th{ padding:8px 6px; }
+body.mobile-mode .page-title{ font-size:18px; }
+body.mobile-mode .tape-month{ min-width:70px; }
+body.mobile-mode .panel{ padding:14px; }
 </style>
 </head>
 <body>
+
+<!-- Header mobile -->
+<div class="mobile-header">
+  <div>
+    <div class="mobile-header-title">Meu Financeiro</div>
+    <div class="mobile-header-sub" id="mobile-status">Carregando…</div>
+  </div>
+  <button class="btn secondary btn-sm" onclick="gdriveLogin()" id="btn-gdrive-mobile" style="font-size:11px">☁ Drive</button>
+</div>
 
 <div class="sidebar">
   <div class="brand">
@@ -139,6 +213,19 @@ tr:hover td{background:var(--bg-hover);}
 
 <div class="main" id="main"></div>
 
+<!-- Bottom nav mobile -->
+<nav class="mobile-nav">
+  <div class="mobile-nav-item active" data-tab="dashboard"><span class="mn-icon">◆</span>Painel</div>
+  <div class="mobile-nav-item" data-tab="entradas"><span class="mn-icon">✚</span>Entradas</div>
+  <div class="mobile-nav-item" data-tab="fixas"><span class="mn-icon">▤</span>Fixas</div>
+  <div class="mobile-nav-item" data-tab="cartoes"><span class="mn-icon">▥</span>Cartões</div>
+  <div class="mobile-nav-item" data-tab="gastos"><span class="mn-icon">▦</span>Gastos</div>
+  <div class="mobile-nav-item" data-tab="projecao"><span class="mn-icon">▧</span>Projeção</div>
+</nav>
+
+<!-- Botão alternar modo -->
+<button class="toggle-mode-btn" onclick="toggleMode()" id="toggle-mode-btn">📱 Mobile</button>
+
 <script>
 // ---------- Estado ----------
 let appData = { recurringDebts: [], cards: [], purchases: [], expenses: [], incomes: [] };
@@ -146,6 +233,38 @@ let currentTab = 'dashboard';
 let viewMonth = ymNow();
 let editing = { fixas: null, cartoes: null, gastos: null, purchaseCard: null, fixaOverride: null, entradaEdit: null, purchaseEdit: null };
 let projRange = 12;
+let isMobile = false;
+
+// ---------- Modo Mobile/Desktop ----------
+function detectMode(){
+  const saved = localStorage.getItem('financeiro-view-mode');
+  if(saved) return saved === 'mobile';
+  return window.innerWidth <= 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+function applyMode(mobile){
+  isMobile = mobile;
+  document.body.classList.toggle('mobile-mode', mobile);
+  const btn = document.getElementById('toggle-mode-btn');
+  if(btn) btn.textContent = mobile ? '🖥 Desktop' : '📱 Mobile';
+  // Sincroniza nav ativo
+  syncNavActive();
+}
+
+function toggleMode(){
+  const next = !isMobile;
+  localStorage.setItem('financeiro-view-mode', next ? 'mobile' : 'desktop');
+  applyMode(next);
+}
+
+function syncNavActive(){
+  document.querySelectorAll('.nav-item').forEach(el=>{
+    el.classList.toggle('active', el.dataset.tab === currentTab);
+  });
+  document.querySelectorAll('.mobile-nav-item').forEach(el=>{
+    el.classList.toggle('active', el.dataset.tab === currentTab);
+  });
+}
 
 const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 const CAT_FIXA = ['Moradia','Financiamento','Assinatura','Educação','Saúde','Transporte','Seguro','Utilidades','Telefonia/Internet','Pensão','Compras Parceladas','Vestuário','Crediário/Loja','Móveis/Eletrodomésticos','Empréstimo','Outros'];
@@ -172,7 +291,15 @@ let gdriveReady = false;
 let gdriveClient = null;
 let tokenRenewTimer = null;
 
-function setStatus(msg){ document.getElementById('storage-status').textContent = msg; }
+function setStatus(msg){
+  const s = document.getElementById('storage-status');
+  const sm = document.getElementById('mobile-status');
+  if(s) s.textContent = msg;
+  if(sm) sm.textContent = msg;
+  // Atualiza botão Drive mobile
+  const btnm = document.getElementById('btn-gdrive-mobile');
+  if(btnm && gdriveReady){ btnm.textContent = '✅ Drive'; btnm.style.background='var(--green)'; btnm.style.color='#fff'; }
+}
 
 // Carrega a lib do Google Identity Services dinamicamente
 function loadGIS(){
@@ -748,6 +875,7 @@ function renderProjecao(){
 // ---------- Handlers ----------
 function attachHandlers(){
   document.querySelectorAll('.nav-item').forEach(n=>n.onclick=()=>{ currentTab=n.dataset.tab; editing={fixas:null,cartoes:null,gastos:null,purchaseCard:null,fixaOverride:null,entradaEdit:null,purchaseEdit:null}; render(); });
+  document.querySelectorAll('.mobile-nav-item').forEach(n=>n.onclick=()=>{ currentTab=n.dataset.tab; editing={fixas:null,cartoes:null,gastos:null,purchaseCard:null,fixaOverride:null,entradaEdit:null,purchaseEdit:null}; render(); });
 
   // Fixas
   const formFixa = document.getElementById('form-fixa');
@@ -909,6 +1037,9 @@ function importData(e){
   reader.readAsText(file);
   e.target.value = '';
 }
+
+// Inicializa modo (mobile ou desktop)
+applyMode(detectMode());
 
 loadData();
 </script>
