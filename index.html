@@ -164,16 +164,19 @@ body.mobile-mode .sidebar{display:none;}
 .mobile-nav{
   display:none; position:fixed; bottom:0; left:0; right:0; z-index:100;
   background:var(--bg-panel); border-top:1px solid var(--border);
-  flex-direction:row; justify-content:space-around; align-items:center;
-  padding:6px 0 env(safe-area-inset-bottom, 6px);
+  flex-direction:row; justify-content:flex-start; align-items:center;
+  padding:6px 4px calc(env(safe-area-inset-bottom, 6px) + 2px) 4px;
+  overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
 }
+.mobile-nav::-webkit-scrollbar{display:none;}
 body.mobile-mode .mobile-nav{display:flex;}
 .mobile-nav-item{
-  display:flex; flex-direction:column; align-items:center; gap:2px;
-  padding:6px 6px; cursor:pointer; color:var(--text-faint); font-size:9px;
-  font-weight:600; letter-spacing:.3px; border-radius:8px; transition:.15s; flex:1;
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  padding:6px 10px; cursor:pointer; color:var(--text-faint); font-size:10px;
+  font-weight:600; letter-spacing:.2px; border-radius:8px; transition:.15s;
+  flex:0 0 auto; white-space:nowrap; min-width:56px;
 }
-.mobile-nav-item .mn-icon{font-size:17px;}
+.mobile-nav-item .mn-icon{font-size:18px;}
 .mobile-nav-item.active{color:var(--amber);}
 .mobile-header{
   display:none; position:sticky; top:0; z-index:99;
@@ -1781,6 +1784,22 @@ function importData(e){
 }
 
 // ===== INIT =====
+// ===== SYNC AUTOMÁTICO AO VOLTAR PRO APP =====
+let lastAutoSync = 0;
+async function autoSyncOnReturn(){
+  if(document.hidden) return;
+  if(!gdriveReady || !gdriveToken) return;
+  const hasOpenForm = Object.values(editing).some(v=>v);
+  if(hasOpenForm) return; // não sobrescreve formulário em preenchimento
+  const now = Date.now();
+  if(now - lastAutoSync < 20000) return; // no máximo 1x a cada 20s
+  lastAutoSync = now;
+  await loadFromDrive();
+}
+document.addEventListener('visibilitychange', autoSyncOnReturn);
+window.addEventListener('focus', autoSyncOnReturn);
+window.addEventListener('pageshow', autoSyncOnReturn);
+
 pinInit();
 </script>
 </body>
