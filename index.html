@@ -419,6 +419,7 @@ function ymFull(ym){ const[y,m]=ym.split('-').map(Number); return MESES[m-1]+' d
 function ymAdd(ym,n){ let[y,m]=ym.split('-').map(Number); m+=n; y+=Math.floor((m-1)/12); m=((m-1)%12+12)%12+1; return y+'-'+String(m).padStart(2,'0'); }
 function ymDiff(a,b){ const[ya,ma]=a.split('-').map(Number),[yb,mb]=b.split('-').map(Number); return (ya-yb)*12+(ma-mb); }
 function brl(v){ return (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+function brlInt(v){ return 'R$ '+Math.round(v||0).toLocaleString('pt-BR'); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
 // ===== GOOGLE DRIVE =====
@@ -586,6 +587,15 @@ function expensesByCat(ym){
   expensesForMonth(ym).forEach(e=>{byCat[e.category]=(byCat[e.category]||0)+Number(e.amount);});
   return byCat;
 }
+function allSpendingByCat(ym){
+  const byCat={};
+  expensesForMonth(ym).forEach(e=>{byCat[e.category]=(byCat[e.category]||0)+Number(e.amount);});
+  appData.purchases.forEach(p=>{
+    const v=purchaseAmountForMonth(p,ym);
+    if(v>0){ const cat=p.category||'Outros'; byCat[cat]=(byCat[cat]||0)+v; }
+  });
+  return byCat;
+}
 
 // ===== SVG CHARTS =====
 function pieSVG(data, size=160){
@@ -665,12 +675,12 @@ function renderDashboard(){
     const isActive=m===ym;
     tape+=`<div class="tape-month${isActive?' active-month':''}" data-tape-month="${m}">
       <div class="tape-bar-wrap"><div class="tape-bar" style="height:${h}px;background:${isActive?'var(--amber)':'var(--blue)'}"></div></div>
-      <div class="tape-val">${Math.round(v)}</div>
+      <div class="tape-val">${brlInt(v)}</div>
       <div class="tape-label">${ymLabel(m)}</div>
     </div>`;
   });
   // Gráficos
-  const byCat=expensesByCat(ym);
+  const byCat=allSpendingByCat(ym);
   const last6=Array.from({length:6},(_,i)=>ymAdd(ym,-5+i));
   const barSeries=[
     {label:'Entradas',color:'#4fb286',values:last6.map(m=>incomesTotalForMonth(m))},
@@ -717,8 +727,8 @@ function renderDashboard(){
     </div>
     <div class="chart-grid">
       <div class="panel">
-        <div class="panel-title">Gastos por categoria — ${ymLabel(ym)}</div>
-        ${Object.keys(byCat).length ? pieSVG(byCat) : '<div class="empty">Nenhum gasto extra este mês</div>'}
+        <div class="panel-title">Gastos por categoria (fixas não incluídas) — ${ymLabel(ym)}</div>
+        ${Object.keys(byCat).length ? pieSVG(byCat) : '<div class="empty">Nenhum gasto ou compra de cartão este mês</div>'}
       </div>
       <div class="panel">
         <div class="panel-title">Entradas x Saídas — últimos 6 meses</div>
@@ -748,7 +758,7 @@ function saldoEvolutionSVG(months,values){
   const valLabels=values.map((v,i)=>{
     const x=Math.round(i*(w/(months.length-1||1)));
     const y=Math.round(h-20-((v-min)/range)*(h-30));
-    return `<text x="${x}" y="${y-6}" text-anchor="middle" font-size="9" fill="${v>=0?'#4fb286':'#d1603d'}">${v>=0?'+':''}${Math.round(v)}</text>`;
+    return `<text x="${x}" y="${y-6}" text-anchor="middle" font-size="10" font-family="'JetBrains Mono',monospace" fill="${v>=0?'#4fb286':'#d1603d'}">${v>=0?'+':''}${Math.round(v).toLocaleString('pt-BR')}</text>`;
   }).join('');
   const zero=min<0&&max>0 ? `<line x1="0" y1="${Math.round(h-20-((-min)/range)*(h-30))}" x2="${w}" y2="${Math.round(h-20-((-min)/range)*(h-30))}" stroke="#2d323d" stroke-dasharray="4"/>` : '';
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px">
