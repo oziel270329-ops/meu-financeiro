@@ -475,19 +475,23 @@ function gdriveLogin(){
 function _doLogin(){
   setStatus('🔄 Conectando…');
   try{
+    // Revoga token antigo inválido antes de pedir novo
+    if(window.google && window.google.accounts && window.google.accounts.oauth2){
+      try{ google.accounts.oauth2.revoke(gdriveToken||'', ()=>{}); }catch(e){}
+    }
     gdriveClient=google.accounts.oauth2.initTokenClient({
       client_id:CLIENT_ID,
       scope:SCOPES,
       callback:(r)=>{
-        console.log('OAuth callback recebido:', r);
+        console.log('OAuth callback:', JSON.stringify(r));
         onTokenReceived(r, true);
       },
       error_callback:(e)=>{
-        console.error('OAuth erro:', e);
-        setStatus('❌ Erro ao conectar: '+e.type);
+        console.error('OAuth erro:', JSON.stringify(e));
+        setStatus('❌ Erro: '+(e.type||e.message||JSON.stringify(e)));
       }
     });
-    gdriveClient.requestAccessToken({prompt:'consent'});
+    gdriveClient.requestAccessToken({prompt:'select_account'});
   }catch(e){
     console.error('Erro ao iniciar OAuth:', e);
     setStatus('❌ Erro: '+e.message);
@@ -502,23 +506,29 @@ async function driveRequest(url,options={}){
 function showReconnectBanner(){
   const old=document.getElementById('reconnect-banner');
   if(old) old.remove();
+  gdriveReady=false; gdriveToken=null; gdriveFileId=null;
+  try{localStorage.removeItem(TOKEN_KEY);}catch(e){}
   const banner=document.createElement('div');
   banner.id='reconnect-banner';
   banner.style.cssText='position:fixed;top:0;left:0;right:0;z-index:8000;background:var(--amber);color:#1a1508;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:600;';
-  banner.innerHTML=`<span>⚠️ Sessão do Google Drive expirou</span><button id="btn-reconnect-banner" style="background:#1a1508;color:var(--amber);border:none;padding:6px 14px;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px">Reconectar</button>`;
-  document.body.prepend(banner);
-  // Usar onclick direto no elemento para garantir contexto síncrono no Safari
-  document.getElementById('btn-reconnect-banner').onclick=function(){
-    document.getElementById('reconnect-banner').remove();
+  const btn=document.createElement('button');
+  btn.textContent='Reconectar';
+  btn.style.cssText='background:#1a1508;color:var(--amber);border:none;padding:6px 14px;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px';
+  btn.addEventListener('click', function(){
+    banner.remove();
+    gdriveFileId=null; gdriveClient=null;
     gdriveLogin();
-  };
-  setStatus('⚠️ Drive desconectado · toque para reconectar');
-  const btn=document.getElementById('btn-gdrive');
-  if(btn){btn.textContent='⚠️ Reconectar Drive';btn.style.background='var(--amber)';}
+  });
+  const span=document.createElement('span');
+  span.textContent='⚠️ Sessão do Google Drive expirou';
+  banner.appendChild(span);
+  banner.appendChild(btn);
+  document.body.prepend(banner);
+  setStatus('⚠️ Drive desconectado');
+  const gdBtn=document.getElementById('btn-gdrive');
+  if(gdBtn){gdBtn.textContent='⚠️ Reconectar Drive';gdBtn.style.background='var(--amber)';}
   const btnm=document.getElementById('btn-gdrive-mobile');
   if(btnm){btnm.textContent='⚠️ Reconectar';btnm.style.background='var(--amber)';btnm.style.color='#1a1508';}
-  gdriveReady=false; gdriveToken=null;
-  try{localStorage.removeItem(TOKEN_KEY);}catch(e){}
 }
 async function findOrCreateFile(){
   if(gdriveFileId) return gdriveFileId;
@@ -541,11 +551,9 @@ async function loadFromDrive(){
     }
     setStatus('☁ Drive · auto-salvo'); render();
   }catch(e){
-    console.error('Erro ao carregar do Drive:',e);
-    if(e.status===401||e.status===403){ showReconnectBanner(); render(); return; }
-    let reason = e.status ? `HTTP ${e.status}` : (e.message||'erro desconhecido');
-    if(String(reason).length>60) reason = String(reason).slice(0,60)+'…';
-    setStatus('⚠️ Drive falhou: '+reason);
+    console.error('Erro Drive:',e);
+    if(e.status===401||e.status===403){ render(); showReconnectBanner(); return; }
+    setStatus('⚠️ Drive falhou: '+(e.status?'HTTP '+e.status:e.message||'erro'));
     render();
   }
 }
