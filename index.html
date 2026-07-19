@@ -448,11 +448,18 @@ function onTokenReceived(resp,isFirstLoad){
   if(resp.error){ if(isFirstLoad){setStatus('💾 Local · conecte o Drive'); render();} return; }
   gdriveToken=resp.access_token; gdriveReady=true;
   saveTokenData(gdriveToken); localStorage.setItem('gdrive-token-hint','1');
+  // Remove banner de reconexão se existir
+  const banner=document.getElementById('reconnect-banner');
+  if(banner) banner.remove();
   document.getElementById('btn-gdrive').textContent='✅ Drive conectado';
   document.getElementById('btn-gdrive').style.background='var(--green)';
+  const btnm=document.getElementById('btn-gdrive-mobile');
+  if(btnm){btnm.textContent='✅ Drive';btnm.style.background='var(--green)';btnm.style.color='#fff';}
   scheduleTokenRenew();
-  if(isFirstLoad){setStatus('☁ Sincronizando…'); loadFromDrive();}
-  else setStatus('☁ Drive · auto-salvo');
+  // Sempre recarrega dados do Drive após conectar
+  setStatus('☁ Sincronizando…');
+  gdriveFileId=null; // força buscar o arquivo novamente
+  loadFromDrive();
 }
 async function gdriveLogin(){
   setStatus('🔄 Conectando…'); await loadGIS();
