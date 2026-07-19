@@ -700,18 +700,22 @@ function pieSVG(data, size=160){
 function barChartSVG(months, series){
   // series = [{label, color, values:[]}]
   const maxVal=Math.max(...series.flatMap(s=>s.values),1);
-  const w=400, h=160, barW=Math.max(8,Math.floor(w/months.length/series.length)-2);
-  const groupW=barW*series.length+4;
+  const w=400, h=160;
+  const leftPad=6, rightPad=6, groupGap=8, barGap=2;
+  const n=months.length, s=series.length;
+  const groupW=(w-leftPad-rightPad-(n-1)*groupGap)/n;
+  const barW=Math.max(4,Math.floor((groupW-(s-1)*barGap)/s));
+  const groupWUsed=barW*s+(s-1)*barGap;
   let bars='', xLabels='';
   months.forEach((m,i)=>{
-    const gx=i*(groupW+6)+4;
-    series.forEach((s,si)=>{
-      const v=s.values[i]||0;
+    const gx=leftPad+i*(groupW+groupGap);
+    series.forEach((se,si)=>{
+      const v=se.values[i]||0;
       const bh=Math.max(2,Math.round((v/maxVal)*(h-20)));
-      const x=gx+si*(barW+2);
-      bars+=`<rect x="${x}" y="${h-20-bh}" width="${barW}" height="${bh}" rx="2" fill="${s.color}" opacity=".85"/>`;
+      const x=gx+si*(barW+barGap);
+      bars+=`<rect x="${x}" y="${h-20-bh}" width="${barW}" height="${bh}" rx="2" fill="${se.color}" opacity=".85"/>`;
     });
-    xLabels+=`<text x="${gx+groupW/2}" y="${h-4}" text-anchor="middle" font-size="9" fill="#5a616f">${ymLabel(m)}</text>`;
+    xLabels+=`<text x="${gx+groupWUsed/2}" y="${h-4}" text-anchor="middle" font-size="9" fill="#5a616f">${ymLabel(m)}</text>`;
   });
   const legends=series.map((s,i)=>`<div class="legend-item"><div class="legend-dot" style="background:${s.color}"></div>${s.label}</div>`).join('');
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px">${bars}${xLabels}</svg><div class="legend">${legends}</div>`;
@@ -823,20 +827,21 @@ function renderDashboard(){
 }
 
 function saldoEvolutionSVG(months,values){
-  const w=500, h=120;
+  const w=500, h=120, padX=32;
   const min=Math.min(...values), max=Math.max(...values,0.01);
   const range=max-min||1;
+  const xAt=i=>Math.round(padX+i*((w-2*padX)/(months.length-1||1)));
   const pts=values.map((v,i)=>{
-    const x=Math.round(i*(w/(months.length-1||1)));
+    const x=xAt(i);
     const y=Math.round(h-20-((v-min)/range)*(h-30));
     return `${x},${y}`;
   }).join(' ');
   const labels=months.map((m,i)=>{
-    const x=Math.round(i*(w/(months.length-1||1)));
+    const x=xAt(i);
     return `<text x="${x}" y="${h-4}" text-anchor="middle" font-size="9" fill="#5a616f">${ymLabel(m)}</text>`;
   }).join('');
   const valLabels=values.map((v,i)=>{
-    const x=Math.round(i*(w/(months.length-1||1)));
+    const x=xAt(i);
     const y=Math.round(h-20-((v-min)/range)*(h-30));
     return `<text x="${x}" y="${y-6}" text-anchor="middle" font-size="10" font-family="'JetBrains Mono',monospace" fill="${v>=0?'#4fb286':'#d1603d'}">${v>=0?'+':''}${Math.round(v).toLocaleString('pt-BR')}</text>`;
   }).join('');
@@ -844,7 +849,7 @@ function saldoEvolutionSVG(months,values){
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px">
     ${zero}
     <polyline points="${pts}" fill="none" stroke="#4fb286" stroke-width="2.5" stroke-linejoin="round"/>
-    ${values.map((v,i)=>{const x=Math.round(i*(w/(months.length-1||1)));const y=Math.round(h-20-((v-min)/range)*(h-30));return `<circle cx="${x}" cy="${y}" r="4" fill="${v>=0?'#4fb286':'#d1603d'}"/>`;}).join('')}
+    ${values.map((v,i)=>{const x=xAt(i);const y=Math.round(h-20-((v-min)/range)*(h-30));return `<circle cx="${x}" cy="${y}" r="4" fill="${v>=0?'#4fb286':'#d1603d'}"/>`;}).join('')}
     ${valLabels}${labels}
   </svg>`;
 }
