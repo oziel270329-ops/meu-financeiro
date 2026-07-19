@@ -427,6 +427,14 @@ function ymDiff(a,b){ const[ya,ma]=a.split('-').map(Number),[yb,mb]=b.split('-')
 function brl(v){ return (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
 function brlInt(v){ return 'R$ '+Math.round(v||0).toLocaleString('pt-BR'); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function scrollToForm(id){
+  requestAnimationFrame(()=>{
+    setTimeout(()=>{
+      const el=document.getElementById(id);
+      if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
+    },30);
+  });
+}
 
 // ===== GOOGLE DRIVE =====
 const CLIENT_ID='796724966722-628cflk7aci60vee2375dtrvps7mrbem.apps.googleusercontent.com';
@@ -1728,10 +1736,10 @@ function attachHandlers(){
     else appData.recurringDebts.push(obj);
     editing.fixas=null; await saveData(); render();
   };
-  document.querySelectorAll('[data-edit-fixa]').forEach(b=>b.onclick=()=>{editing.fixas=b.dataset.editFixa; render();});
+  document.querySelectorAll('[data-edit-fixa]').forEach(b=>b.onclick=()=>{editing.fixas=b.dataset.editFixa; render(); scrollToForm('form-fixa');});
   document.querySelectorAll('[data-del-fixa]').forEach(b=>b.onclick=()=>confirmDel('Excluir esta conta fixa?',async()=>{appData.recurringDebts=appData.recurringDebts.filter(d=>d.id!==b.dataset.delFixa); await saveData(); render();}));
   const cancelFixa=document.getElementById('cancel-fixa'); if(cancelFixa) cancelFixa.onclick=()=>{editing.fixas=null; render();};
-  document.querySelectorAll('[data-adjust-fixa]').forEach(b=>b.onclick=()=>{editing.fixaOverride=editing.fixaOverride===b.dataset.adjustFixa?null:b.dataset.adjustFixa; render();});
+  document.querySelectorAll('[data-adjust-fixa]').forEach(b=>b.onclick=()=>{editing.fixaOverride=editing.fixaOverride===b.dataset.adjustFixa?null:b.dataset.adjustFixa; render(); if(editing.fixaOverride) scrollToForm('form-fixa-adjust');});
   const formFixaAdjust=document.getElementById('form-fixa-adjust');
   if(formFixaAdjust) formFixaAdjust.onsubmit=async e=>{
     e.preventDefault(); const f=new FormData(formFixaAdjust);
@@ -1744,6 +1752,7 @@ function attachHandlers(){
   document.querySelectorAll('[data-adjust-periodo]').forEach(b=>b.onclick=()=>{
     editing.fixaPeriodo=editing.fixaPeriodo===b.dataset.adjustPeriodo?null:b.dataset.adjustPeriodo;
     editing.fixaOverride=null; render();
+    if(editing.fixaPeriodo) scrollToForm('form-fixa-periodo');
   });
   const formFixaPeriodo=document.getElementById('form-fixa-periodo');
   if(formFixaPeriodo) formFixaPeriodo.onsubmit=async e=>{
@@ -1795,15 +1804,15 @@ function attachHandlers(){
     }
     await saveData(); render();
   };
-  document.querySelectorAll('[data-edit-card]').forEach(b=>b.onclick=()=>{editing.cardEdit=editing.cardEdit===b.dataset.editCard?null:b.dataset.editCard; render();});
+  document.querySelectorAll('[data-edit-card]').forEach(b=>b.onclick=()=>{editing.cardEdit=editing.cardEdit===b.dataset.editCard?null:b.dataset.editCard; render(); if(editing.cardEdit) scrollToForm('form-card');});
   const cancelCard=document.getElementById('cancel-card'); if(cancelCard) cancelCard.onclick=()=>{editing.cardEdit=null; render();};
   document.querySelectorAll('[data-del-card]').forEach(b=>b.onclick=()=>confirmDel('Excluir este cartão e todas as compras?',async()=>{
     const id=b.dataset.delCard; appData.cards=appData.cards.filter(c=>c.id!==id); appData.purchases=appData.purchases.filter(p=>p.cardId!==id); await saveData(); render();
   }));
   document.querySelectorAll('[data-goto-config]').forEach(el=>el.onclick=()=>{currentTab='config'; render();});
   document.querySelectorAll('[data-goto-investir]').forEach(el=>el.onclick=()=>{currentTab='investir'; render();});
-  document.querySelectorAll('[data-add-purchase]').forEach(b=>b.onclick=()=>{editing.purchaseCard=editing.purchaseCard===b.dataset.addPurchase?null:b.dataset.addPurchase; editing.purchaseEdit=null; render();});
-  document.querySelectorAll('[data-edit-purchase]').forEach(b=>b.onclick=()=>{editing.purchaseEdit=editing.purchaseEdit===b.dataset.editPurchase?null:b.dataset.editPurchase; editing.purchaseCard=null; render();});
+  document.querySelectorAll('[data-add-purchase]').forEach(b=>b.onclick=()=>{editing.purchaseCard=editing.purchaseCard===b.dataset.addPurchase?null:b.dataset.addPurchase; editing.purchaseEdit=null; render(); if(editing.purchaseCard) scrollToForm('form-purchase');});
+  document.querySelectorAll('[data-edit-purchase]').forEach(b=>b.onclick=()=>{editing.purchaseEdit=editing.purchaseEdit===b.dataset.editPurchase?null:b.dataset.editPurchase; editing.purchaseCard=null; render(); if(editing.purchaseEdit) scrollToForm('form-purchase');});
   const formPurchase=document.getElementById('form-purchase');
   if(formPurchase) formPurchase.onsubmit=async e=>{
     e.preventDefault(); const f=new FormData(formPurchase); const editId=formPurchase.dataset.edit;
@@ -1836,7 +1845,7 @@ function attachHandlers(){
     }
     await saveData(); render();
   };
-  document.querySelectorAll('[data-edit-expense]').forEach(b=>b.onclick=()=>{editing.gastos=editing.gastos===b.dataset.editExpense?null:b.dataset.editExpense; render();});
+  document.querySelectorAll('[data-edit-expense]').forEach(b=>b.onclick=()=>{editing.gastos=editing.gastos===b.dataset.editExpense?null:b.dataset.editExpense; render(); if(editing.gastos) scrollToForm('form-expense');});
   document.querySelectorAll('[data-del-expense]').forEach(b=>b.onclick=()=>confirmDel('Excluir este gasto?',async()=>{appData.expenses=appData.expenses.filter(x=>x.id!==b.dataset.delExpense); await saveData(); render();}));
   document.querySelectorAll('[data-toggle-expense-paid]').forEach(cb=>cb.onchange=async()=>{
     const ex=appData.expenses.find(x=>x.id===cb.dataset.toggleExpensePaid); if(ex) ex.paid=cb.checked; await saveData(); render();
@@ -1859,7 +1868,7 @@ function attachHandlers(){
     }
     await saveData(); render();
   };
-  document.querySelectorAll('[data-edit-income]').forEach(b=>b.onclick=()=>{editing.entradaEdit=editing.entradaEdit===b.dataset.editIncome?null:b.dataset.editIncome; render();});
+  document.querySelectorAll('[data-edit-income]').forEach(b=>b.onclick=()=>{editing.entradaEdit=editing.entradaEdit===b.dataset.editIncome?null:b.dataset.editIncome; render(); if(editing.entradaEdit) scrollToForm('form-income');});
   const cancelIncome=document.getElementById('cancel-income'); if(cancelIncome) cancelIncome.onclick=()=>{editing.entradaEdit=null; render();};
   document.querySelectorAll('[data-del-income]').forEach(b=>b.onclick=()=>confirmDel('Excluir esta entrada?',async()=>{appData.incomes=appData.incomes.filter(x=>x.id!==b.dataset.delIncome); await saveData(); render();}));
 
@@ -1882,7 +1891,7 @@ function attachHandlers(){
     }
     await saveData(); render();
   };
-  document.querySelectorAll('[data-edit-invest]').forEach(b=>b.onclick=()=>{editing.investEdit=editing.investEdit===b.dataset.editInvest?null:b.dataset.editInvest; render();});
+  document.querySelectorAll('[data-edit-invest]').forEach(b=>b.onclick=()=>{editing.investEdit=editing.investEdit===b.dataset.editInvest?null:b.dataset.editInvest; render(); if(editing.investEdit) scrollToForm('form-invest');});
   const cancelInvest=document.getElementById('cancel-invest'); if(cancelInvest) cancelInvest.onclick=()=>{editing.investEdit=null; render();};
   document.querySelectorAll('[data-del-invest]').forEach(b=>b.onclick=()=>confirmDel('Excluir este aporte?',async()=>{appData.investments=appData.investments.filter(x=>x.id!==b.dataset.delInvest); await saveData(); render();}));
 
