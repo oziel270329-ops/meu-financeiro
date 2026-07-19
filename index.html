@@ -201,6 +201,9 @@ body.mobile-mode .page-title{font-size:18px;}
 body.mobile-mode .tape-month{min-width:70px;}
 body.mobile-mode .panel{padding:14px;}
 body.mobile-mode .chart-grid{grid-template-columns:1fr;}
+body.mobile-mode .section-flex{flex-direction:column; align-items:flex-start; gap:10px;}
+body.mobile-mode .section-flex > div:last-child{text-align:left !important; width:100%;}
+body.mobile-mode table{display:block; overflow-x:auto; white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -300,7 +303,7 @@ body.mobile-mode .chart-grid{grid-template-columns:1fr;}
 let appData = { recurringDebts:[], cards:[], purchases:[], expenses:[], incomes:[] };
 let currentTab = 'dashboard';
 let viewMonth = ymNow();
-let editing = { fixas:null, cartoes:null, gastos:null, purchaseCard:null, fixaOverride:null, fixaPeriodo:null, entradaEdit:null, purchaseEdit:null };
+let editing = { fixas:null, cartoes:null, gastos:null, purchaseCard:null, fixaOverride:null, entradaEdit:null, purchaseEdit:null, cardEdit:null };
 let projRange = 12;
 let isMobile = false;
 let confirmCallback = null;
@@ -406,7 +409,7 @@ function syncNavActive(){
 // ===== CONSTANTES =====
 const MESES=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 const CAT_FIXA=['Moradia','Financiamento','Assinatura','Educação','Saúde','Transporte','Seguro','Utilidades','Telefonia/Internet','Pensão','Compras Parceladas','Vestuário','Crediário/Loja','Móveis/Eletrodomésticos','Empréstimo','Outros'];
-const CAT_GASTO=['Alimentação','Mercado','Vestuário','Transporte','Lazer','Saúde','Casa','Educação','Assinaturas','Pets','Presentes','Viagem','Compras','Outros'];
+const CAT_GASTO=['Alimentação','Mercado','Combustível','Farmácia','Vestuário','Transporte','Lazer','Saúde','Casa','Educação','Assinaturas','Pets','Presentes','Viagem','Compras','Outros'];
 const CAT_ENTRADA=['Salário','Freelance','Investimentos','Reembolso','Outros'];
 const CHART_COLORS=['#4fb286','#5b8dd6','#d9a441','#d1603d','#9b72d4','#4db6ac','#f06292','#a5c65f','#ff8a65','#80cbc4','#ce93d8','#fff176'];
 
@@ -457,7 +460,7 @@ async function gdriveLogin(){
 }
 async function driveRequest(url,options={}){
   const res=await fetch(url,{...options,headers:{'Authorization':'Bearer '+gdriveToken,...(options.headers||{})}});
-  if(!res.ok){const t=await res.text();throw new Error(t);}
+  if(!res.ok){const t=await res.text();const err=new Error(t);err.status=res.status;throw err;}
   return res;
 }
 async function findOrCreateFile(){
@@ -482,14 +485,36 @@ async function loadFromDrive(){
     setStatus('☁ Drive · auto-salvo'); render();
   }catch(e){setStatus('☁ Drive · novo arquivo'); render();}
 }
-async function saveToDrive(json){
+async function saveToDrive(json,retry=true){
   try{
     const fileId=await findOrCreateFile();
     await driveRequest(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:json});
+    setStatus('☁ Drive · auto-salvo');
     // Backup automático semanal
     const now=Date.now(); const lastBk=parseInt(localStorage.getItem('last-auto-backup')||'0');
     if(now-lastBk > 7*24*60*60*1000){ autoBackupToDrive(json); localStorage.setItem('last-auto-backup',now.toString()); }
-  }catch(e){setStatus('⚠️ Erro ao salvar no Drive');}
+  }catch(e){
+    const authError = e.status===401 || e.status===403;
+    if(authError && retry && gdriveClient){
+      try{
+        await new Promise((resolve,reject)=>{
+          const prevCallback = gdriveClient.callback;
+          gdriveClient.callback = (r)=>{
+            gdriveClient.callback = prevCallback;
+            if(r.error){reject(r); return;}
+            gdriveToken=r.access_token; gdriveReady=true; saveTokenData(gdriveToken); resolve();
+          };
+          gdriveClient.requestAccessToken({prompt:''});
+        });
+        return saveToDrive(json,false);
+      }catch(e2){
+        gdriveReady=false;
+        setStatus('⚠️ Sessão do Drive expirou — toque em ☁ Drive para reconectar');
+      }
+    } else {
+      setStatus('⚠️ Erro ao salvar no Drive — toque em ☁ Drive para reconectar');
+    }
+  }
 }
 async function autoBackupToDrive(json){
   try{
@@ -535,7 +560,10 @@ function fixedTotalForMonth(ym){ return fixedDebtsForMonth(ym).reduce((s,d)=>s+f
 function incomesForMonth(ym){ return appData.incomes.filter(i=>i.month===ym); }
 function incomesTotalForMonth(ym){ return incomesForMonth(ym).reduce((s,i)=>s+Number(i.amount),0); }
 function installmentValue(p,idx){ const base=Math.floor((p.totalAmount/p.installments)*100)/100; const last=Math.round((p.totalAmount-base*(p.installments-1))*100)/100; return idx===p.installments-1?last:base; }
-function purchaseAmountForMonth(p,ym){ const idx=ymDiff(ym,p.firstMonth); return(idx>=0&&idx<p.installments)?installmentValue(p,idx):0; }
+function purchaseAmountForMonth(p,ym){
+  if(p.recurring) return (ym>=p.firstMonth && (!p.endMonth||ym<=p.endMonth)) ? Number(p.totalAmount) : 0;
+  const idx=ymDiff(ym,p.firstMonth); return(idx>=0&&idx<p.installments)?installmentValue(p,idx):0;
+}
 function cardInvoiceForMonth(cardId,ym){ return appData.purchases.filter(p=>p.cardId===cardId).reduce((s,p)=>s+purchaseAmountForMonth(p,ym),0); }
 function allCardsTotalForMonth(ym){ return appData.cards.reduce((s,c)=>s+cardInvoiceForMonth(c.id,ym),0); }
 function expensesForMonth(ym){ return appData.expenses.filter(e=>e.month===ym); }
@@ -543,7 +571,13 @@ function expensesTotalForMonth(ym){ return expensesForMonth(ym).reduce((s,e)=>s+
 function monthGrandTotal(ym){ return fixedTotalForMonth(ym)+allCardsTotalForMonth(ym)+expensesTotalForMonth(ym); }
 function totalOutstandingDebt(){
   const now=ymNow(); let total=0;
-  appData.purchases.forEach(p=>{for(let i=0;i<p.installments;i++){const ym=ymAdd(p.firstMonth,i);if(ym>=now)total+=installmentValue(p,i);}});
+  appData.purchases.forEach(p=>{
+    if(p.recurring){
+      if(p.endMonth){ let ym=p.firstMonth>now?p.firstMonth:now; while(ym<=p.endMonth){total+=Number(p.totalAmount); ym=ymAdd(ym,1);} }
+    } else {
+      for(let i=0;i<p.installments;i++){const ym=ymAdd(p.firstMonth,i);if(ym>=now)total+=installmentValue(p,i);}
+    }
+  });
   appData.recurringDebts.forEach(d=>{if(d.endMonth){let ym=d.startMonth>now?d.startMonth:now;while(ym<=d.endMonth){total+=Number(d.amount);ym=ymAdd(ym,1);}}});
   return total;
 }
@@ -631,7 +665,7 @@ function renderDashboard(){
     const isActive=m===ym;
     tape+=`<div class="tape-month${isActive?' active-month':''}" data-tape-month="${m}">
       <div class="tape-bar-wrap"><div class="tape-bar" style="height:${h}px;background:${isActive?'var(--amber)':'var(--blue)'}"></div></div>
-      <div class="tape-val">${Math.round(v/1000)}k</div>
+      <div class="tape-val">${Math.round(v)}</div>
       <div class="tape-label">${ymLabel(m)}</div>
     </div>`;
   });
@@ -714,7 +748,7 @@ function saldoEvolutionSVG(months,values){
   const valLabels=values.map((v,i)=>{
     const x=Math.round(i*(w/(months.length-1||1)));
     const y=Math.round(h-20-((v-min)/range)*(h-30));
-    return `<text x="${x}" y="${y-6}" text-anchor="middle" font-size="9" fill="${v>=0?'#4fb286':'#d1603d'}">${v>=0?'+':''}${Math.round(v/1000)}k</text>`;
+    return `<text x="${x}" y="${y-6}" text-anchor="middle" font-size="9" fill="${v>=0?'#4fb286':'#d1603d'}">${v>=0?'+':''}${Math.round(v)}</text>`;
   }).join('');
   const zero=min<0&&max>0 ? `<line x1="0" y1="${Math.round(h-20-((-min)/range)*(h-30))}" x2="${w}" y2="${Math.round(h-20-((-min)/range)*(h-30))}" stroke="#2d323d" stroke-dasharray="4"/>` : '';
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px">
@@ -741,8 +775,7 @@ function renderFixas(){
       <td>dia ${d.dueDay}</td>
       <td>${active?`<label class="checkbox-row"><input type="checkbox" data-toggle-fixa-paid="${d.id}" ${paid?'checked':''}> ${paid?'✅':'⏳'}</label>`:'<span style="color:var(--text-faint)">—</span>'}</td>
       <td>
-        ${active?`<button class="btn-icon" data-adjust-fixa="${d.id}" title="Ajustar mês">R$</button>`:''}
-        <button class="btn-icon" data-adjust-periodo="${d.id}" title="Ajustar período em lote">📅</button>
+        ${active?`<button class="btn-icon" data-adjust-fixa="${d.id}" title="Ajustar valor">R$</button>`:''}
         <button class="btn-icon" data-edit-fixa="${d.id}">✎</button>
         <button class="btn-icon" data-del-fixa="${d.id}">✕</button>
       </td>
@@ -750,7 +783,9 @@ function renderFixas(){
   }).join('');
   const ed=editing.fixas?appData.recurringDebts.find(d=>d.id===editing.fixas):null;
   const adj=editing.fixaOverride?appData.recurringDebts.find(d=>d.id===editing.fixaOverride):null;
-  const adjPeriodo=editing.fixaPeriodo?appData.recurringDebts.find(d=>d.id===editing.fixaPeriodo):null;
+  // Repeat from prev month button
+  const prevYm=ymAdd(viewMonth,-1);
+  const prevFixas=fixedDebtsForMonth(prevYm);
   return `
     <div class="page-title">Contas Fixas</div>
     <div class="page-sub">Despesas recorrentes mensais.</div>
@@ -785,31 +820,6 @@ function renderFixas(){
         <button type="button" class="btn secondary" id="cancel-fixa-adjust">Cancelar</button>
         ${adj.overrides&&adj.overrides[viewMonth]&&adj.overrides[viewMonth].amount!=null?'<button type="button" class="btn danger" id="reset-fixa-adjust">Resetar</button>':''}
       </div></form></div>`:''}
-    ${adjPeriodo?`<div class="panel" style="border-color:var(--amber)">
-      <div class="panel-title">📅 Ajustar período — "${adjPeriodo.name}"</div>
-      <div class="hint" style="margin-bottom:14px">Define um novo valor para um intervalo de meses. Útil quando o valor muda a partir de determinado mês (reajuste, nova parcela, etc).</div>
-      <form id="form-fixa-periodo">
-        <div class="form-row">
-          <div class="field"><label>Novo valor (R$)</label><input name="novoValor" type="number" step="0.01" min="0" required placeholder="Ex: 750,00"></div>
-          <div class="field"><label>Mês início</label><input name="mesInicio" type="month" required value="${viewMonth}"></div>
-          <div class="field"><label>Mês fim (opcional)</label><input name="mesFim" type="month" placeholder="Deixe em branco = até o fim"></div>
-          <button type="submit" class="btn">Aplicar em lote</button>
-          <button type="button" class="btn secondary" id="cancel-fixa-periodo">Cancelar</button>
-        </div>
-        <div class="hint">Valor atual médio: <b>${brl(adjPeriodo.amount)}</b> · Deixar o fim em branco aplica até ${adjPeriodo.endMonth?ymLabel(adjPeriodo.endMonth):'o fim da conta'}.</div>
-      </form>
-      ${(() => {
-        // Mostra overrides de período existentes agrupados
-        const overrides=adjPeriodo.overrides||{};
-        const periodos=Object.entries(overrides).filter(([,v])=>v.amount!=null).sort(([a],[b])=>a.localeCompare(b));
-        if(!periodos.length) return '';
-        return `<div style="margin-top:14px"><div class="panel-title" style="margin-bottom:8px">Ajustes já cadastrados</div>
-          <table><thead><tr><th>Mês</th><th>Valor ajustado</th><th></th></tr></thead><tbody>
-          ${periodos.map(([m,v])=>`<tr><td>${ymFull(m)}</td><td class="num" style="color:var(--amber)">${brl(v.amount)}</td>
-            <td><button class="btn-icon" data-del-override="${adjPeriodo.id}" data-del-override-month="${m}">✕</button></td></tr>`).join('')}
-          </tbody></table></div>`;
-      })()}
-    </div>`:''}
     <div class="search-bar"><input id="search-input" placeholder="🔍 Buscar conta…" value="${searchTerm}"></div>
     <div class="panel">
       <div class="panel-title">Contas (${filtered.length})</div>
@@ -884,18 +894,18 @@ function renderCartoes(){
   const cardCards=appData.cards.map(c=>{
     const fatura=cardInvoiceForMonth(c.id,viewMonth);
     const usedLimit=appData.purchases.filter(p=>p.cardId===c.id).reduce((s,p)=>{
-      let rem=0;
-      for(let i=0;i<p.installments;i++){
-        const ym=ymAdd(p.firstMonth,i);
-        if(ym>=viewMonth) rem+=installmentValue(p,i);
+      if(p.recurring){
+        if(!p.endMonth) return s;
+        let rem=0, ym=ymNow()>p.firstMonth?ymNow():p.firstMonth;
+        while(ym<=p.endMonth){rem+=Number(p.totalAmount); ym=ymAdd(ym,1);}
+        return s+rem;
       }
-      return s+rem;
+      let rem=0;for(let i=0;i<p.installments;i++){if(ymAdd(p.firstMonth,i)>=ymNow())rem+=installmentValue(p,i);}return s+rem;
     },0);
     return `<div class="panel">
       <div class="section-flex">
         <div><div style="font-weight:700;font-size:15px">${c.name}</div><div class="hint">Fecha dia ${c.closingDay} · Vence dia ${c.dueDay} · Limite ${brl(c.limit)}</div></div>
         <div style="text-align:right"><div class="stat-label">Fatura ${ymLabel(viewMonth)}</div><div class="stat-value amber mono">${brl(fatura)}</div></div>
-        <button class="btn-icon" data-del-card="${c.id}">✕</button>
       </div>
       <div class="hint" style="margin-bottom:10px">Saldo devedor: <b class="mono" style="color:var(--red)">${brl(usedLimit)}</b> de ${brl(c.limit)}</div>
       ${renderCardPurchasesTable(c.id)}
@@ -914,31 +924,32 @@ function renderCartoes(){
       <button class="btn-icon" data-month-nav="1">▶</button>
       <button class="btn secondary btn-sm" data-month-today="1">Hoje</button>
     </div>
-    <div class="panel"><div class="panel-title">Novo cartão</div>
-      <form id="form-card"><div class="form-row">
-        <div class="field" style="flex:2"><label>Nome</label><input name="name" required></div>
-        <div class="field"><label>Limite</label><input name="limit" type="number" step="0.01" min="0" required></div>
-        <div class="field"><label>Fechamento</label><input name="closingDay" type="number" min="1" max="31" required value="20"></div>
-        <div class="field"><label>Vencimento</label><input name="dueDay" type="number" min="1" max="31" required value="27"></div>
-        <button type="submit" class="btn">Adicionar</button>
-      </div></form>
-    </div>
-    ${cardCards||'<div class="panel"><div class="empty">Nenhum cartão.</div></div>'}
+    <div class="hint" style="margin-bottom:16px">Cartões são cadastrados e editados (nome, limite, fechamento, vencimento) em <b data-goto-config="1" style="color:var(--amber);cursor:pointer">⚙ Configurações</b>.</div>
+    ${cardCards||'<div class="panel"><div class="empty">Nenhum cartão cadastrado ainda — vá em Configurações para adicionar.</div></div>'}
   `;
 }
 function renderCardPurchasesTable(cardId){
   const list=appData.purchases.filter(p=>p.cardId===cardId).sort((a,b)=>b.firstMonth.localeCompare(a.firstMonth));
   if(!list.length) return '<div class="empty">Nenhuma compra.</div>';
   const rows=list.map(p=>{
-    const idx=ymDiff(viewMonth,p.firstMonth);
-    const statusTxt=idx<0?'futura':idx>=p.installments?'quitada':`${idx+1}/${p.installments}`;
-    const statusTag=idx<0?'blue':idx>=p.installments?'green':'amber';
-    const parcela=installmentValue(p,Math.max(0,Math.min(idx,p.installments-1)));
+    let statusTxt, statusTag, tipoCell;
+    if(p.recurring){
+      const ended = p.endMonth && viewMonth>p.endMonth;
+      const future = viewMonth<p.firstMonth;
+      statusTxt = future?'futura':ended?'encerrada':'recorrente';
+      statusTag = future?'blue':ended?'green':'purple';
+      tipoCell = `<span class="tag purple">Recorrente</span><div class="hint" style="margin:0">${p.endMonth?'até '+ymLabel(p.endMonth):'sem data fim'}</div>`;
+    } else {
+      const idx=ymDiff(viewMonth,p.firstMonth);
+      statusTxt=idx<0?'futura':idx>=p.installments?'quitada':`${idx+1}/${p.installments}`;
+      statusTag=idx<0?'blue':idx>=p.installments?'green':'amber';
+      tipoCell = `<span class="tag ${p.installments>1?'amber':'blue'}">${p.installments>1?p.installments+'x':'à vista'}</span>`;
+    }
     return `<tr>
       <td>${p.description}${p.notes?`<div class="hint" style="margin:0">${p.notes}</div>`:''}</td>
       <td><span class="tag purple">${p.category||'Outros'}</span></td>
-      <td><span class="tag ${p.installments>1?'amber':'blue'}">${p.installments>1?p.installments+'x':'à vista'}</span></td>
-      <td class="num" style="color:var(--amber);font-weight:700">${brl(parcela)}</td>
+      <td>${tipoCell}</td>
+      <td class="num">${brl(p.totalAmount)}${p.recurring?'<div class="hint" style="margin:0">/mês</div>':''}</td>
       <td>${ymLabel(p.firstMonth)}</td>
       <td><span class="tag ${statusTag}">${statusTxt}</span></td>
       <td>
@@ -947,25 +958,35 @@ function renderCardPurchasesTable(cardId){
       </td>
     </tr>`;
   }).join('');
-  return `<table><thead><tr><th>Descrição</th><th>Categoria</th><th>Tipo</th><th>Parcela</th><th>1ª parcela</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<table><thead><tr><th>Descrição</th><th>Categoria</th><th>Tipo</th><th>Valor</th><th>Início</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 function renderPurchaseForm(cardId,purchase){
   const ed=purchase||null;
-  const parcela=ed?Math.round((ed.totalAmount/ed.installments)*100)/100:'';
+  const isRec = ed&&ed.recurring;
   return `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
     <form id="form-purchase" data-card="${cardId}" data-edit="${ed?ed.id:''}">
       <div class="form-row">
         <div class="field" style="flex:2"><label>Descrição</label><input name="description" required value="${ed?ed.description:''}"></div>
         <div class="field"><label>Categoria</label><select name="category">${CAT_GASTO.map(c=>`<option ${ed&&ed.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
-        <div class="field"><label>Valor da parcela (R$)</label><input name="parcela" type="number" step="0.01" min="0" required value="${parcela}"></div>
-        <div class="field"><label>Nº de parcelas</label><input name="installments" type="number" min="1" max="120" value="${ed?ed.installments:1}" required></div>
-        <div class="field"><label>1ª parcela</label><input name="firstMonth" type="month" required value="${ed?ed.firstMonth:ymNow()}"></div>
+        <div class="field"><label>Valor ${isRec?'mensal':'total'}</label><input name="totalAmount" type="number" step="0.01" min="0" required value="${ed?ed.totalAmount:''}"></div>
+        <div class="field"><label>Tipo</label>
+          <select name="kind" onchange="const f=this.closest('form'); const rec=this.value==='recorrente'; f.querySelectorAll('.only-installment').forEach(x=>x.style.display=rec?'none':''); f.querySelectorAll('.only-recurring').forEach(x=>x.style.display=rec?'':'none');">
+            <option value="parcelado" ${!isRec?'selected':''}>Parcelado / à vista</option>
+            <option value="recorrente" ${isRec?'selected':''}>Recorrente (assinatura/mensalidade)</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field only-installment" style="display:${isRec?'none':''}"><label>Parcelas</label><input name="installments" type="number" min="1" max="60" value="${ed&&!isRec?ed.installments:1}"></div>
+        <div class="field only-recurring" style="display:${isRec?'':'none'}"><label>Até quando (opcional)</label><input name="endMonth" type="month" value="${ed&&ed.endMonth?ed.endMonth:''}"></div>
+        <div class="field"><label>Mês inicial</label><input name="firstMonth" type="month" required value="${ed?ed.firstMonth:ymNow()}"></div>
       </div>
       <div class="form-row">
         <div class="field" style="flex:2"><label>Observação</label><input name="notes" placeholder="Opcional" value="${ed&&ed.notes?ed.notes:''}"></div>
         <button type="submit" class="btn">${ed?'Salvar':'Lançar'}</button>
         <button type="button" class="btn secondary" id="cancel-purchase">Cancelar</button>
       </div>
+      <div class="hint">Recorrente: cobra o mesmo valor todo mês, sem número fixo de parcelas — ideal para assinaturas ou compras que se repetem mas não são parceladas. Deixe "Até quando" em branco se não tiver data de término definida.</div>
     </form>
   </div>`;
 }
@@ -1067,6 +1088,7 @@ function renderProjecao(){
 function renderParcelamentos(){
   const now=ymNow();
   const ativos=appData.purchases.filter(p=>{
+    if(p.recurring) return false;
     const last=ymAdd(p.firstMonth,p.installments-1);
     return last>=now;
   }).sort((a,b)=>{
@@ -1075,6 +1097,7 @@ function renderParcelamentos(){
     return remA-remB;
   });
   const quitados=appData.purchases.filter(p=>{
+    if(p.recurring) return false;
     const last=ymAdd(p.firstMonth,p.installments-1);
     return last<now;
   });
@@ -1339,8 +1362,38 @@ function imprimirRelatorio(){
 
 // ===== CONFIGURAÇÕES =====
 function renderConfig(){
+  const edCard=editing.cardEdit?appData.cards.find(c=>c.id===editing.cardEdit):null;
+  const cardRows=appData.cards.map(c=>`
+    <tr>
+      <td>${c.name}</td>
+      <td class="num">${brl(c.limit)}</td>
+      <td>dia ${c.closingDay}</td>
+      <td>dia ${c.dueDay}</td>
+      <td>
+        <button class="btn-icon" data-edit-card="${c.id}">✎</button>
+        <button class="btn-icon" data-del-card="${c.id}">✕</button>
+      </td>
+    </tr>`).join('');
   return `
     <div class="page-title">Configurações</div>
+    <div class="panel"><div class="panel-title">${edCard?'Editar cartão':'Novo cartão de crédito'}</div>
+      <form id="form-card">
+        <div class="form-row">
+          <div class="field" style="flex:2"><label>Nome</label><input name="name" required value="${edCard?edCard.name:''}"></div>
+          <div class="field"><label>Limite (R$)</label><input name="limit" type="number" step="0.01" min="0" required value="${edCard?edCard.limit:''}"></div>
+          <div class="field"><label>Fechamento</label><input name="closingDay" type="number" min="1" max="31" required value="${edCard?edCard.closingDay:20}"></div>
+          <div class="field"><label>Vencimento</label><input name="dueDay" type="number" min="1" max="31" required value="${edCard?edCard.dueDay:27}"></div>
+        </div>
+        <div class="form-row">
+          <button type="submit" class="btn">${edCard?'Salvar':'Adicionar cartão'}</button>
+          ${edCard?'<button type="button" class="btn secondary" id="cancel-card">Cancelar</button>':''}
+        </div>
+        ${edCard?'<div class="hint">Alterar o limite aqui não mexe nas compras já lançadas.</div>':''}
+      </form>
+    </div>
+    <div class="panel"><div class="panel-title">Cartões cadastrados (${appData.cards.length})</div>
+      ${appData.cards.length?`<table><thead><tr><th>Nome</th><th>Limite</th><th>Fecha</th><th>Vence</th><th></th></tr></thead><tbody>${cardRows}</tbody></table>`:'<div class="empty">Nenhum cartão cadastrado.</div>'}
+    </div>
     <div class="panel"><div class="panel-title">Segurança</div>
       <div style="display:flex;flex-direction:column;gap:12px">
         <button class="btn secondary" onclick="alterarPin()">🔒 Alterar PIN</button>
@@ -1380,7 +1433,7 @@ function removerPin(){
 function attachHandlers(){
   document.querySelectorAll('.nav-item,.mobile-nav-item').forEach(n=>n.onclick=()=>{
     currentTab=n.dataset.tab; searchTerm='';
-    editing={fixas:null,cartoes:null,gastos:null,purchaseCard:null,fixaOverride:null,fixaPeriodo:null,entradaEdit:null,purchaseEdit:null};
+    editing={fixas:null,cartoes:null,gastos:null,purchaseCard:null,fixaOverride:null,entradaEdit:null,purchaseEdit:null,cardEdit:null};
     render();
   });
   // Tape nav
@@ -1415,35 +1468,6 @@ function attachHandlers(){
     editing.fixaOverride=null; await saveData(); render();
   };
   const cancelAdj=document.getElementById('cancel-fixa-adjust'); if(cancelAdj) cancelAdj.onclick=()=>{editing.fixaOverride=null; render();};
-  // Ajuste em período (lote)
-  document.querySelectorAll('[data-adjust-periodo]').forEach(b=>b.onclick=()=>{editing.fixaPeriodo=editing.fixaPeriodo===b.dataset.adjustPeriodo?null:b.dataset.adjustPeriodo; editing.fixaOverride=null; render();});
-  const formFixaPeriodo=document.getElementById('form-fixa-periodo');
-  if(formFixaPeriodo) formFixaPeriodo.onsubmit=async e=>{
-    e.preventDefault(); const f=new FormData(formFixaPeriodo);
-    const debt=appData.recurringDebts.find(d=>d.id===editing.fixaPeriodo);
-    if(debt){
-      const novoValor=parseFloat(f.get('novoValor'));
-      const mesInicio=f.get('mesInicio');
-      const mesFim=f.get('mesFim')||debt.endMonth||ymAdd(ymNow(),60);
-      debt.overrides=debt.overrides||{};
-      let m=mesInicio, guard=0;
-      while(m<=mesFim && guard<120){
-        debt.overrides[m]={...(debt.overrides[m]||{}), amount:novoValor};
-        m=ymAdd(m,1); guard++;
-      }
-    }
-    editing.fixaPeriodo=null; await saveData(); render();
-  };
-  const cancelFixaPeriodo=document.getElementById('cancel-fixa-periodo'); if(cancelFixaPeriodo) cancelFixaPeriodo.onclick=()=>{editing.fixaPeriodo=null; render();};
-  document.querySelectorAll('[data-del-override]').forEach(b=>b.onclick=async()=>{
-    const debt=appData.recurringDebts.find(d=>d.id===b.dataset.delOverride);
-    const mes=b.dataset.delOverrideMonth;
-    if(debt&&debt.overrides&&debt.overrides[mes]){
-      delete debt.overrides[mes].amount;
-      if(!debt.overrides[mes].paid) delete debt.overrides[mes];
-    }
-    await saveData(); render();
-  });
   const resetAdj=document.getElementById('reset-fixa-adjust');
   if(resetAdj) resetAdj.onclick=async()=>{
     const d=appData.recurringDebts.find(x=>x.id===editing.fixaOverride);
@@ -1460,26 +1484,35 @@ function attachHandlers(){
   const formCard=document.getElementById('form-card');
   if(formCard) formCard.onsubmit=async e=>{
     e.preventDefault(); const f=new FormData(formCard);
-    appData.cards.push({id:uid(),name:f.get('name'),limit:parseFloat(f.get('limit')),closingDay:parseInt(f.get('closingDay')),dueDay:parseInt(f.get('dueDay'))});
+    if(editing.cardEdit){
+      const c=appData.cards.find(x=>x.id===editing.cardEdit);
+      if(c){c.name=f.get('name');c.limit=parseFloat(f.get('limit'));c.closingDay=parseInt(f.get('closingDay'));c.dueDay=parseInt(f.get('dueDay'));}
+      editing.cardEdit=null;
+    } else {
+      appData.cards.push({id:uid(),name:f.get('name'),limit:parseFloat(f.get('limit')),closingDay:parseInt(f.get('closingDay')),dueDay:parseInt(f.get('dueDay'))});
+    }
     await saveData(); render();
   };
+  document.querySelectorAll('[data-edit-card]').forEach(b=>b.onclick=()=>{editing.cardEdit=editing.cardEdit===b.dataset.editCard?null:b.dataset.editCard; render();});
+  const cancelCard=document.getElementById('cancel-card'); if(cancelCard) cancelCard.onclick=()=>{editing.cardEdit=null; render();};
   document.querySelectorAll('[data-del-card]').forEach(b=>b.onclick=()=>confirmDel('Excluir este cartão e todas as compras?',async()=>{
     const id=b.dataset.delCard; appData.cards=appData.cards.filter(c=>c.id!==id); appData.purchases=appData.purchases.filter(p=>p.cardId!==id); await saveData(); render();
   }));
+  document.querySelectorAll('[data-goto-config]').forEach(el=>el.onclick=()=>{currentTab='config'; render();});
   document.querySelectorAll('[data-add-purchase]').forEach(b=>b.onclick=()=>{editing.purchaseCard=editing.purchaseCard===b.dataset.addPurchase?null:b.dataset.addPurchase; editing.purchaseEdit=null; render();});
   document.querySelectorAll('[data-edit-purchase]').forEach(b=>b.onclick=()=>{editing.purchaseEdit=editing.purchaseEdit===b.dataset.editPurchase?null:b.dataset.editPurchase; editing.purchaseCard=null; render();});
   const formPurchase=document.getElementById('form-purchase');
   if(formPurchase) formPurchase.onsubmit=async e=>{
     e.preventDefault(); const f=new FormData(formPurchase); const editId=formPurchase.dataset.edit;
-    const parcela=parseFloat(f.get('parcela'));
-    const installments=parseInt(f.get('installments'));
-    const totalAmount=Math.round(parcela*installments*100)/100;
+    const recurring = f.get('kind')==='recorrente';
+    const installments = recurring?1:(parseInt(f.get('installments'))||1);
+    const endMonth = recurring?(f.get('endMonth')||null):null;
     if(editId){
       const p=appData.purchases.find(x=>x.id===editId);
-      if(p){p.description=f.get('description');p.category=f.get('category');p.totalAmount=totalAmount;p.installments=installments;p.firstMonth=f.get('firstMonth');p.notes=f.get('notes')||'';}
+      if(p){p.description=f.get('description');p.category=f.get('category');p.totalAmount=parseFloat(f.get('totalAmount'));p.installments=installments;p.firstMonth=f.get('firstMonth');p.notes=f.get('notes')||'';p.recurring=recurring;p.endMonth=endMonth;}
       editing.purchaseEdit=null;
     } else {
-      appData.purchases.push({id:uid(),cardId:formPurchase.dataset.card,description:f.get('description'),category:f.get('category'),totalAmount,installments,firstMonth:f.get('firstMonth'),notes:f.get('notes')||''});
+      appData.purchases.push({id:uid(),cardId:formPurchase.dataset.card,description:f.get('description'),category:f.get('category'),totalAmount:parseFloat(f.get('totalAmount')),installments,firstMonth:f.get('firstMonth'),notes:f.get('notes')||'',recurring,endMonth});
       editing.purchaseCard=null;
     }
     await saveData(); render();
