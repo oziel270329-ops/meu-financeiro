@@ -688,6 +688,10 @@ function allSpendingByCat(ym){
     const v=purchaseAmountForMonth(p,ym);
     if(v>0){ const cat=p.category||'Outros'; byCat[cat]=(byCat[cat]||0)+v; }
   });
+  fixedDebtsForMonth(ym).forEach(d=>{
+    const v=fixedAmountForMonth(d,ym);
+    if(v>0){ const cat=d.category||'Outros'; byCat[cat]=(byCat[cat]||0)+v; }
+  });
   return byCat;
 }
 
@@ -880,7 +884,7 @@ function renderDashboard(){
     </div>
     <div class="chart-grid">
       <div class="panel">
-        <div class="panel-title">Gastos por categoria (fixas não incluídas) — ${ymLabel(ym)}</div>
+        <div class="panel-title">Gastos por categoria (fixas + cartão + extras) — ${ymLabel(ym)}</div>
         ${Object.keys(byCat).length ? pieSVG(byCat,160,income) : '<div class="empty">Nenhum gasto ou compra de cartão este mês</div>'}
       </div>
       <div class="panel">
@@ -1183,7 +1187,6 @@ function renderCartoes(){
         <button class="btn secondary btn-sm" data-add-purchase="${c.id}">+ Nova compra</button>
       </div>
       ${editing.purchaseCard===c.id?renderPurchaseForm(c.id):''}
-      ${(editing.purchaseEdit&&appData.purchases.find(p=>p.id===editing.purchaseEdit&&p.cardId===c.id))?renderPurchaseForm(c.id,appData.purchases.find(p=>p.id===editing.purchaseEdit)):''}
     </div>`;
   }).join('');
   return `
@@ -1201,7 +1204,8 @@ function renderCartoes(){
 function renderCardPurchasesTable(cardId){
   const list=appData.purchases.filter(p=>p.cardId===cardId).sort((a,b)=>b.firstMonth.localeCompare(a.firstMonth));
   if(!list.length) return '<div class="empty">Nenhuma compra.</div>';
-  const rows=list.map(p=>{
+  let rows='';
+  list.forEach(p=>{
     let statusTxt, statusTag, tipoCell;
     if(p.recurring){
       const ended = p.endMonth && viewMonth>p.endMonth;
@@ -1216,7 +1220,7 @@ function renderCardPurchasesTable(cardId){
       tipoCell = `<span class="tag ${p.installments>1?'amber':'blue'}">${p.installments>1?p.installments+'x':'à vista'}</span>`;
     }
     const parcela = p.recurring ? p.totalAmount : installmentValue(p, Math.max(0, Math.min(ymDiff(viewMonth,p.firstMonth), (p.installments||1)-1)));
-    return `<tr>
+    rows+=`<tr>
       <td>${p.description}${p.notes?`<div class="hint" style="margin:0">${p.notes}</div>`:''}</td>
       <td><span class="tag purple">${p.category||'Outros'}</span></td>
       <td>${tipoCell}</td>
@@ -1228,13 +1232,16 @@ function renderCardPurchasesTable(cardId){
         <button class="btn-icon" data-del-purchase="${p.id}" title="Excluir">✕</button>
       </td>
     </tr>`;
-  }).join('');
+    if(editing.purchaseEdit===p.id){
+      rows+=`<tr><td colspan="7" style="background:var(--bg-elevated);padding:14px;border-radius:8px;white-space:normal">${renderPurchaseForm(cardId,p,true)}</td></tr>`;
+    }
+  });
   return `<table><thead><tr><th>Descrição</th><th>Categoria</th><th>Tipo</th><th style="text-align:right">Parcela</th><th>1ª Parcela</th><th>Status</th><th style="text-align:right">Ações</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
-function renderPurchaseForm(cardId,purchase){
+function renderPurchaseForm(cardId,purchase,inline){
   const ed=purchase||null;
   const isRec = ed&&ed.recurring;
-  return `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+  return `<div style="${inline?'':'margin-top:12px;padding-top:12px;border-top:1px solid var(--border)'}">
     <form id="form-purchase" data-card="${cardId}" data-edit="${ed?ed.id:''}">
       <div class="form-row">
         <div class="field" style="flex:2"><label>Descrição</label><input name="description" required value="${ed?ed.description:''}"></div>
@@ -1259,9 +1266,8 @@ function renderPurchaseForm(cardId,purchase){
       </div>
       <div class="hint">Recorrente: cobra o mesmo valor todo mês, sem número fixo de parcelas — ideal para assinaturas ou compras que se repetem mas não são parceladas. Deixe "Até quando" em branco se não tiver data de término definida.</div>
     </form>
-  </div>`;
+    </div>`;
 }
-
 // ===== GASTOS =====
 function renderGastos(){
   const allList=expensesForMonth(viewMonth);
@@ -1812,7 +1818,7 @@ function attachHandlers(){
   document.querySelectorAll('[data-goto-config]').forEach(el=>el.onclick=()=>{currentTab='config'; render();});
   document.querySelectorAll('[data-goto-investir]').forEach(el=>el.onclick=()=>{currentTab='investir'; render();});
   document.querySelectorAll('[data-add-purchase]').forEach(b=>b.onclick=()=>{editing.purchaseCard=editing.purchaseCard===b.dataset.addPurchase?null:b.dataset.addPurchase; editing.purchaseEdit=null; render(); if(editing.purchaseCard) scrollToForm('form-purchase');});
-  document.querySelectorAll('[data-edit-purchase]').forEach(b=>b.onclick=()=>{editing.purchaseEdit=editing.purchaseEdit===b.dataset.editPurchase?null:b.dataset.editPurchase; editing.purchaseCard=null; render(); if(editing.purchaseEdit) scrollToForm('form-purchase');});
+  document.querySelectorAll('[data-edit-purchase]').forEach(b=>b.onclick=()=>{editing.purchaseEdit=editing.purchaseEdit===b.dataset.editPurchase?null:b.dataset.editPurchase; editing.purchaseCard=null; render();});
   const formPurchase=document.getElementById('form-purchase');
   if(formPurchase) formPurchase.onsubmit=async e=>{
     e.preventDefault(); const f=new FormData(formPurchase); const editId=formPurchase.dataset.edit;
