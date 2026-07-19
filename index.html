@@ -424,8 +424,9 @@ function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(
 
 // ===== GOOGLE DRIVE =====
 const CLIENT_ID='796724966722-628cflk7aci60vee2375dtrvps7mrbem.apps.googleusercontent.com';
-const SCOPES='https://www.googleapis.com/auth/drive.appdata';
+const SCOPES='https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME='meu-financeiro-data.json';
+const DRIVE_FOLDER_NAME='Meu Financeiro App';
 const STORAGE_KEY='meu-financeiro-v1';
 const TOKEN_KEY='gdrive-token-data';
 
@@ -462,6 +463,7 @@ function onTokenReceived(resp,isFirstLoad){
   loadFromDrive();
 }
 function gdriveLogin(){
+  gdriveFileId=null; gdriveFolderId=null;
   if(window.google && window.google.accounts){
     _doLogin();
   } else {
@@ -506,7 +508,7 @@ async function driveRequest(url,options={}){
 function showReconnectBanner(){
   const old=document.getElementById('reconnect-banner');
   if(old) old.remove();
-  gdriveReady=false; gdriveToken=null; gdriveFileId=null;
+  gdriveReady=false; gdriveToken=null; gdriveFileId=null; gdriveFolderId=null;
   try{localStorage.removeItem(TOKEN_KEY);}catch(e){}
   const banner=document.createElement('div');
   banner.id='reconnect-banner';
@@ -530,14 +532,34 @@ function showReconnectBanner(){
   const btnm=document.getElementById('btn-gdrive-mobile');
   if(btnm){btnm.textContent='⚠️ Reconectar';btnm.style.background='var(--amber)';btnm.style.color='#1a1508';}
 }
+async function findOrCreateFolder(){
+  // Busca pasta "Meu Financeiro App" no Drive
+  const q=encodeURIComponent(`name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const res=await driveRequest(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+  const data=await res.json();
+  if(data.files&&data.files.length>0) return data.files[0].id;
+  // Cria pasta
+  const cr=await driveRequest('https://www.googleapis.com/drive/v3/files?fields=id',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:DRIVE_FOLDER_NAME, mimeType:'application/vnd.google-apps.folder'})
+  });
+  return (await cr.json()).id;
+}
+let gdriveFolderId=null;
 async function findOrCreateFile(){
   if(gdriveFileId) return gdriveFileId;
-  const q=encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
-  const res=await driveRequest(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id,name)`);
+  // Busca ou cria pasta
+  if(!gdriveFolderId) gdriveFolderId=await findOrCreateFolder();
+  // Busca arquivo na pasta
+  const q=encodeURIComponent(`name='${DRIVE_FILE_NAME}' and '${gdriveFolderId}' in parents and trashed=false`);
+  const res=await driveRequest(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
   const data=await res.json();
   if(data.files&&data.files.length>0){gdriveFileId=data.files[0].id; return gdriveFileId;}
-  const meta={name:DRIVE_FILE_NAME,parents:['appDataFolder']};
-  const cr=await driveRequest('https://www.googleapis.com/drive/v3/files?fields=id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(meta)});
+  // Cria arquivo na pasta
+  const cr=await driveRequest('https://www.googleapis.com/drive/v3/files?fields=id',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:DRIVE_FILE_NAME, parents:[gdriveFolderId]})
+  });
   gdriveFileId=(await cr.json()).id; return gdriveFileId;
 }
 async function loadFromDrive(){
@@ -571,9 +593,12 @@ async function saveToDrive(json,retry=true){
 }
 async function autoBackupToDrive(json){
   try{
+    if(!gdriveFolderId) gdriveFolderId=await findOrCreateFolder();
     const date=new Date().toISOString().slice(0,10);
-    const meta={name:`meu-financeiro-backup-${date}.json`,parents:['appDataFolder']};
-    const cr=await driveRequest('https://www.googleapis.com/drive/v3/files?fields=id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(meta)});
+    const cr=await driveRequest('https://www.googleapis.com/drive/v3/files?fields=id',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:`meu-financeiro-backup-${date}.json`, parents:[gdriveFolderId]})
+    });
     const id=(await cr.json()).id;
     await driveRequest(`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:json});
   }catch(e){}
