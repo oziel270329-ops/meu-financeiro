@@ -464,6 +464,25 @@ async function driveRequest(url,options={}){
   if(!res.ok){const t=await res.text();const err=new Error(t);err.status=res.status;throw err;}
   return res;
 }
+
+function showReconnectBanner(){
+  // Remove banner anterior se existir
+  const old=document.getElementById('reconnect-banner');
+  if(old) old.remove();
+  const banner=document.createElement('div');
+  banner.id='reconnect-banner';
+  banner.style.cssText='position:fixed;top:0;left:0;right:0;z-index:8000;background:var(--amber);color:#1a1508;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:600;';
+  banner.innerHTML=`<span>⚠️ Sessão do Google Drive expirou</span><button onclick="gdriveLogin();document.getElementById('reconnect-banner').remove();" style="background:#1a1508;color:var(--amber);border:none;padding:6px 14px;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px">Reconectar</button>`;
+  document.body.prepend(banner);
+  setStatus('⚠️ Drive desconectado · toque para reconectar');
+  // Atualiza botões
+  const btn=document.getElementById('btn-gdrive');
+  if(btn){btn.textContent='⚠️ Reconectar Drive';btn.style.background='var(--amber)';}
+  const btnm=document.getElementById('btn-gdrive-mobile');
+  if(btnm){btnm.textContent='⚠️ Reconectar';btnm.style.background='var(--amber)';btnm.style.color='#1a1508';}
+  gdriveReady=false; gdriveToken=null;
+  try{localStorage.removeItem(TOKEN_KEY);}catch(e){}
+}
 async function findOrCreateFile(){
   if(gdriveFileId) return gdriveFileId;
   const q=encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
@@ -486,6 +505,7 @@ async function loadFromDrive(){
     setStatus('☁ Drive · auto-salvo'); render();
   }catch(e){
     console.error('Erro ao carregar do Drive:',e);
+    if(e.status===401||e.status===403){ showReconnectBanner(); render(); return; }
     let reason = e.status ? `HTTP ${e.status}` : (e.message||'erro desconhecido');
     if(String(reason).length>60) reason = String(reason).slice(0,60)+'…';
     setStatus('⚠️ Drive falhou: '+reason);
@@ -497,30 +517,11 @@ async function saveToDrive(json,retry=true){
     const fileId=await findOrCreateFile();
     await driveRequest(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:json});
     setStatus('☁ Drive · auto-salvo');
-    // Backup automático semanal
     const now=Date.now(); const lastBk=parseInt(localStorage.getItem('last-auto-backup')||'0');
     if(now-lastBk > 7*24*60*60*1000){ autoBackupToDrive(json); localStorage.setItem('last-auto-backup',now.toString()); }
   }catch(e){
-    const authError = e.status===401 || e.status===403;
-    if(authError && retry && gdriveClient){
-      try{
-        await new Promise((resolve,reject)=>{
-          const prevCallback = gdriveClient.callback;
-          gdriveClient.callback = (r)=>{
-            gdriveClient.callback = prevCallback;
-            if(r.error){reject(r); return;}
-            gdriveToken=r.access_token; gdriveReady=true; saveTokenData(gdriveToken); resolve();
-          };
-          gdriveClient.requestAccessToken({prompt:''});
-        });
-        return saveToDrive(json,false);
-      }catch(e2){
-        gdriveReady=false;
-        setStatus('⚠️ Sessão do Drive expirou — toque em ☁ Drive para reconectar');
-      }
-    } else {
-      setStatus('⚠️ Erro ao salvar no Drive — toque em ☁ Drive para reconectar');
-    }
+    if(e.status===401||e.status===403){ showReconnectBanner(); return; }
+    setStatus('⚠️ Erro ao salvar no Drive');
   }
 }
 async function autoBackupToDrive(json){
@@ -787,13 +788,14 @@ function renderFixas(){
       <td>${d.name}${d.notes?`<div class="hint" style="margin:0;margin-top:2px">${d.notes}</div>`:''}</td>
       <td><span class="tag blue">${d.category}</span></td>
       <td class="num">${brl(d.amount)}</td>
-      <td class="num">${active?brl(amt)+'':'<span style="color:var(--text-faint)">—</span>'}${overridden?' <span class="tag amber">aj.</span>':''}</td>
-      <td>dia ${d.dueDay}</td>
-      <td>${active?`<label class="checkbox-row"><input type="checkbox" data-toggle-fixa-paid="${d.id}" ${paid?'checked':''}> ${paid?'✅':'⏳'}</label>`:'<span style="color:var(--text-faint)">—</span>'}</td>
-      <td>
-        ${active?`<button class="btn-icon" data-adjust-fixa="${d.id}" title="Ajustar valor">R$</button>`:''}
-        <button class="btn-icon" data-edit-fixa="${d.id}">✎</button>
-        <button class="btn-icon" data-del-fixa="${d.id}">✕</button>
+      <td class="num">${active?brl(amt):'<span style="color:var(--text-faint)">—</span>'}${overridden?' <span class="tag amber">aj.</span>':''}</td>
+      <td style="white-space:nowrap">dia ${d.dueDay}</td>
+      <td style="white-space:nowrap">${active?`<label class="checkbox-row" style="gap:6px"><input type="checkbox" data-toggle-fixa-paid="${d.id}" ${paid?'checked':''}> <span>${paid?'✅ Pago':'⏳ Pend.'}</span></label>`:'<span style="color:var(--text-faint)">—</span>'}</td>
+      <td style="text-align:right;white-space:nowrap">
+        ${active?`<button class="btn-icon" data-adjust-fixa="${d.id}" title="Ajustar este mês" style="font-size:11px;font-weight:700">R$</button>`:''}
+        <button class="btn-icon" data-adjust-periodo="${d.id}" title="Ajustar período em lote">📅</button>
+        <button class="btn-icon" data-edit-fixa="${d.id}" title="Editar">✎</button>
+        <button class="btn-icon" data-del-fixa="${d.id}" title="Excluir">✕</button>
       </td>
     </tr>`;
   }).join('');
@@ -837,9 +839,38 @@ function renderFixas(){
         ${adj.overrides&&adj.overrides[viewMonth]&&adj.overrides[viewMonth].amount!=null?'<button type="button" class="btn danger" id="reset-fixa-adjust">Resetar</button>':''}
       </div></form></div>`:''}
     <div class="search-bar"><input id="search-input" placeholder="🔍 Buscar conta…" value="${searchTerm}"></div>
+    ${editing.fixaPeriodo ? (()=>{
+      const dp=appData.recurringDebts.find(d=>d.id===editing.fixaPeriodo);
+      if(!dp) return '';
+      const overrides=dp.overrides||{};
+      const periodos=Object.entries(overrides).filter(([,v])=>v.amount!=null).sort(([a],[b])=>a.localeCompare(b));
+      return `<div class="panel" style="border-color:var(--amber)">
+        <div class="panel-title">📅 Ajustar período — "${dp.name}"</div>
+        <div class="hint" style="margin-bottom:14px">Define um novo valor para um intervalo de meses. Útil para reajustes, novas parcelas ou qualquer mudança que ocorre a partir de certo mês.</div>
+        <form id="form-fixa-periodo">
+          <div class="form-row">
+            <div class="field"><label>Novo valor (R$)</label><input name="novoValor" type="number" step="0.01" min="0" required placeholder="Ex: 750,00"></div>
+            <div class="field"><label>Mês início</label><input name="mesInicio" type="month" required value="${viewMonth}"></div>
+            <div class="field"><label>Mês fim (opcional)</label><input name="mesFim" type="month" placeholder="Deixe em branco = até o fim"></div>
+            <button type="submit" class="btn">✅ Aplicar em lote</button>
+            <button type="button" class="btn secondary" id="cancel-fixa-periodo">Cancelar</button>
+          </div>
+          <div class="hint">Valor base atual: <b class="mono">${brl(dp.amount)}</b> · Se não informar o fim, aplica até ${dp.endMonth?ymLabel(dp.endMonth):'o fim da conta'}.</div>
+        </form>
+        ${periodos.length?`<div style="margin-top:14px">
+          <div class="panel-title" style="margin-bottom:8px">Ajustes de período cadastrados</div>
+          <table><thead><tr><th>Mês</th><th style="text-align:right">Valor ajustado</th><th style="text-align:right">Remover</th></tr></thead>
+          <tbody>${periodos.map(([m,v])=>`<tr>
+            <td>${ymFull(m)}</td>
+            <td class="num" style="color:var(--amber)">${brl(v.amount)}</td>
+            <td style="text-align:right"><button class="btn-icon" data-del-override="${dp.id}" data-del-override-month="${m}" title="Remover ajuste">✕</button></td>
+          </tr>`).join('')}</tbody></table>
+        </div>`:''}
+      </div>`;
+    })() : ''}
     <div class="panel">
       <div class="panel-title">Contas (${filtered.length})</div>
-      ${filtered.length?`<table><thead><tr><th>Nome</th><th>Categoria</th><th>Média</th><th>${ymLabel(viewMonth)}</th><th>Vence</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`:'<div class="empty">Nenhuma conta encontrada.</div>'}
+      ${filtered.length?`<table><thead><tr><th>Nome</th><th>Categoria</th><th style="text-align:right">Média</th><th style="text-align:right">${ymLabel(viewMonth)}</th><th>Vence</th><th>Status</th><th style="text-align:right">Ações</th></tr></thead><tbody>${rows}</tbody></table>`:'<div class="empty">Nenhuma conta encontrada.</div>'}
     </div>
   `;
 }
@@ -961,20 +992,21 @@ function renderCardPurchasesTable(cardId){
       statusTag=idx<0?'blue':idx>=p.installments?'green':'amber';
       tipoCell = `<span class="tag ${p.installments>1?'amber':'blue'}">${p.installments>1?p.installments+'x':'à vista'}</span>`;
     }
+    const parcela = p.recurring ? p.totalAmount : installmentValue(p, Math.max(0, Math.min(ymDiff(viewMonth,p.firstMonth), (p.installments||1)-1)));
     return `<tr>
       <td>${p.description}${p.notes?`<div class="hint" style="margin:0">${p.notes}</div>`:''}</td>
       <td><span class="tag purple">${p.category||'Outros'}</span></td>
       <td>${tipoCell}</td>
-      <td class="num">${brl(p.totalAmount)}${p.recurring?'<div class="hint" style="margin:0">/mês</div>':''}</td>
-      <td>${ymLabel(p.firstMonth)}</td>
+      <td class="num" style="color:var(--amber);font-weight:700">${brl(parcela)}${p.recurring?'<div class="hint" style="margin:0">/mês</div>':''}</td>
+      <td style="white-space:nowrap">${ymLabel(p.firstMonth)}</td>
       <td><span class="tag ${statusTag}">${statusTxt}</span></td>
-      <td>
-        <button class="btn-icon" data-edit-purchase="${p.id}">✎</button>
-        <button class="btn-icon" data-del-purchase="${p.id}">✕</button>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn-icon" data-edit-purchase="${p.id}" title="Editar">✎</button>
+        <button class="btn-icon" data-del-purchase="${p.id}" title="Excluir">✕</button>
       </td>
     </tr>`;
   }).join('');
-  return `<table><thead><tr><th>Descrição</th><th>Categoria</th><th>Tipo</th><th>Valor</th><th>Início</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<table><thead><tr><th>Descrição</th><th>Categoria</th><th>Tipo</th><th style="text-align:right">Parcela</th><th>1ª Parcela</th><th>Status</th><th style="text-align:right">Ações</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 function renderPurchaseForm(cardId,purchase){
   const ed=purchase||null;
@@ -1094,7 +1126,7 @@ function renderProjecao(){
       </select>
     </div></div>
     <div class="panel"><table>
-      <thead><tr><th>Mês</th><th>Fixas</th><th>Cartões</th><th>Extras</th><th>Total</th><th>Acumulado</th></tr></thead>
+      <thead><tr><th>Mês</th><th style="text-align:right">Fixas</th><th style="text-align:right">Cartões</th><th style="text-align:right">Extras</th><th style="text-align:right">Total</th><th style="text-align:right">Acumulado</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
   `;
@@ -1105,6 +1137,7 @@ function renderParcelamentos(){
   const now=ymNow();
   const ativos=appData.purchases.filter(p=>{
     if(p.recurring) return false;
+    if((p.installments||1) < 2) return false; // ignora à vista
     const last=ymAdd(p.firstMonth,p.installments-1);
     return last>=now;
   }).sort((a,b)=>{
@@ -1114,6 +1147,7 @@ function renderParcelamentos(){
   });
   const quitados=appData.purchases.filter(p=>{
     if(p.recurring) return false;
+    if((p.installments||1) < 2) return false; // ignora à vista
     const last=ymAdd(p.firstMonth,p.installments-1);
     return last<now;
   });
@@ -1484,6 +1518,36 @@ function attachHandlers(){
     editing.fixaOverride=null; await saveData(); render();
   };
   const cancelAdj=document.getElementById('cancel-fixa-adjust'); if(cancelAdj) cancelAdj.onclick=()=>{editing.fixaOverride=null; render();};
+  // Ajuste em período (lote)
+  document.querySelectorAll('[data-adjust-periodo]').forEach(b=>b.onclick=()=>{
+    editing.fixaPeriodo=editing.fixaPeriodo===b.dataset.adjustPeriodo?null:b.dataset.adjustPeriodo;
+    editing.fixaOverride=null; render();
+  });
+  const formFixaPeriodo=document.getElementById('form-fixa-periodo');
+  if(formFixaPeriodo) formFixaPeriodo.onsubmit=async e=>{
+    e.preventDefault(); const f=new FormData(formFixaPeriodo);
+    const debt=appData.recurringDebts.find(d=>d.id===editing.fixaPeriodo);
+    if(debt){
+      const novoValor=parseFloat(f.get('novoValor'));
+      const mesInicio=f.get('mesInicio');
+      const mesFim=f.get('mesFim')||debt.endMonth||ymAdd(ymNow(),60);
+      debt.overrides=debt.overrides||{};
+      let m=mesInicio, guard=0;
+      while(m<=mesFim && guard<120){ debt.overrides[m]={...(debt.overrides[m]||{}),amount:novoValor}; m=ymAdd(m,1); guard++; }
+    }
+    editing.fixaPeriodo=null; await saveData(); render();
+  };
+  const cancelFixaPeriodo=document.getElementById('cancel-fixa-periodo');
+  if(cancelFixaPeriodo) cancelFixaPeriodo.onclick=()=>{editing.fixaPeriodo=null; render();};
+  document.querySelectorAll('[data-del-override]').forEach(b=>b.onclick=async()=>{
+    const debt=appData.recurringDebts.find(d=>d.id===b.dataset.delOverride);
+    const mes=b.dataset.delOverrideMonth;
+    if(debt&&debt.overrides&&debt.overrides[mes]){
+      delete debt.overrides[mes].amount;
+      if(!debt.overrides[mes].paid) delete debt.overrides[mes];
+    }
+    await saveData(); render();
+  });
   const resetAdj=document.getElementById('reset-fixa-adjust');
   if(resetAdj) resetAdj.onclick=async()=>{
     const d=appData.recurringDebts.find(x=>x.id===editing.fixaOverride);
