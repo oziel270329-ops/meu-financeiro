@@ -1514,6 +1514,13 @@ function renderConfig(){
     <div class="panel"><div class="panel-title">Cartões cadastrados (${appData.cards.length})</div>
       ${appData.cards.length?`<table><thead><tr><th>Nome</th><th>Limite</th><th>Fecha</th><th>Vence</th><th></th></tr></thead><tbody>${cardRows}</tbody></table>`:'<div class="empty">Nenhum cartão cadastrado.</div>'}
     </div>
+    <div class="panel"><div class="panel-title">Sincronização com Drive</div>
+      <div class="hint" style="margin-bottom:12px">Status atual: <b>${gdriveReady?'✅ conectado':'⚠️ não conectado'}</b>. Se um aparelho tem dados e outro está vazio, use os botões abaixo pra forçar a sincronização manualmente.</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button class="btn secondary" id="btn-force-push" ${gdriveReady?'':'disabled'}>⬆️ Enviar dados deste aparelho para o Drive agora</button>
+        <button class="btn secondary" id="btn-force-pull" ${gdriveReady?'':'disabled'}>⬇️ Puxar dados do Drive para este aparelho agora</button>
+      </div>
+    </div>
     <div class="panel"><div class="panel-title">Segurança</div>
       <div style="display:flex;flex-direction:column;gap:12px">
         <button class="btn secondary" onclick="alterarPin()">🔒 Alterar PIN</button>
@@ -1736,6 +1743,19 @@ function attachHandlers(){
     appData={recurringDebts:[],cards:[],purchases:[],expenses:[],incomes:[]};
     await saveData(); render();
   });
+  const btnForcePush=document.getElementById('btn-force-push');
+  if(btnForcePush) btnForcePush.onclick=async()=>{
+    setStatus('⬆️ Enviando…');
+    gdriveFileId=null;
+    await saveToDrive(JSON.stringify(appData));
+  };
+  const btnForcePull=document.getElementById('btn-force-pull');
+  if(btnForcePull) btnForcePull.onclick=async()=>{
+    if(!confirm('Isso vai SUBSTITUIR os dados deste aparelho pelos que estiverem salvos no Drive. Continuar?')) return;
+    setStatus('⬇️ Puxando…');
+    gdriveFileId=null;
+    await loadFromDrive();
+  };
 }
 
 // ===== BACKUP / RESTORE =====
