@@ -484,7 +484,13 @@ async function loadFromDrive(){
       localStorage.setItem(STORAGE_KEY,JSON.stringify(appData));
     }
     setStatus('☁ Drive · auto-salvo'); render();
-  }catch(e){setStatus('☁ Drive · novo arquivo'); render();}
+  }catch(e){
+    console.error('Erro ao carregar do Drive:',e);
+    let reason = e.status ? `HTTP ${e.status}` : (e.message||'erro desconhecido');
+    if(String(reason).length>60) reason = String(reason).slice(0,60)+'…';
+    setStatus('⚠️ Drive falhou: '+reason);
+    render();
+  }
 }
 async function saveToDrive(json,retry=true){
   try{
